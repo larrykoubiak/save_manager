@@ -1,0 +1,18 @@
+services:
+  save-manager:
+    build: .
+    user: "${SAVE_MANAGER_UID:-10001}:${SAVE_MANAGER_GID:-10001}"
+    ports:
+      - "127.0.0.1:${SAVE_MANAGER_PORT:-8081}:8080"
+    environment:
+      SAVE_MANAGER_TOKEN: ${SAVE_MANAGER_TOKEN:-}
+    volumes:
+      - save-manager-data:/data
+      # Add card folders in your local compose.override.yaml.
+    # Set SAVE_MANAGER_UID/GID in .env to match restricted host folders.
+    # Existing /data contents must be owned by the selected UID/GID too.
+    restart: unless-stopped
+    init: true
+
+volumes:
+  save-manager-data:

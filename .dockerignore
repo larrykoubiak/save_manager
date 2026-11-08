@@ -1,0 +1,24 @@
+.git
+**/.git
+.venv
+__pycache__
+**/__pycache__
+*.egg-info
+build
+dist
+experiments
+raw
+tests
+vendor/mymcplusplus/test
+vendor/mymcplusplus/build
+vendor/mymcplusplus/dist
+data
+.env
+*.sqlite3*
+*.ps2
+*.bin
+*.mcr
+
+# Machine-specific card mounts
+compose.override.yaml
+compose.override.yml

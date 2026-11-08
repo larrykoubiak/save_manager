@@ -1,0 +1,13 @@
+# Copy to compose.override.yaml and replace the host path.
+# Docker Compose loads that ignored local file automatically.
+services:
+  save-manager:
+    volumes:
+      - type: bind
+        source: /path/to/your/memcards
+        target: /cards/emulator
+        read_only: true
+        bind:
+          create_host_path: false
+# For reviewed transfers, set read_only: false and grant the container user
+# write access to the card files and their parent folder.

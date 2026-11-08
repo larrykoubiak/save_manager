@@ -1,0 +1,17 @@
+include README.md CHANGELOG.md THIRD_PARTY.md LICENSE
+include Dockerfile compose.yaml compose.override.yaml.example .dockerignore
+include .gitmodules vendor/README.md
+recursive-include save_web *.py *.html *.css *.js
+recursive-include save_core *.py
+recursive-include docs *.md
+recursive-include tests *.py
+recursive-include vendor/mymcplusplus *.py *.md *.txt *.html *.png *.gz LICENSE
+prune experiments
+prune build
+prune dist
+prune vendor/mymcplusplus/build
+prune vendor/mymcplusplus/dist
+prune vendor/mymcplusplus/test/data
+prune vendor/mymcplusplus/.github
+global-exclude .git .gitignore
+global-exclude *.py[cod] *.egg-info/*

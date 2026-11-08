@@ -1,0 +1,21 @@
+*.pyc
+__pycache__/
+.venv/
+*.swp
+.idea/
+.pytest_cache/
+/vendor/mymcplusplus/test/data/
+build/
+dist/
+raw/
+*.egg-info/
+/experiments/
+/data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+.env
+
+# Machine-specific card mounts
+compose.override.yaml
+compose.override.yml
