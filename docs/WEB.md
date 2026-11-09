@@ -205,9 +205,9 @@ the scan has succeeded. A transfer that fails after preview records its
 error in transfer history. IDs are server-owned: requests cannot supply
 arbitrary source or destination filenames for transfers.
 
-Schema version 3 uses `PRAGMA user_version`; older inventories migrate
-automatically to add icon caching, internal slot observations and transfer slot
-numbers. Existing inventory/history is retained. A newer database is rejected.
+Schema version 5 uses `PRAGMA user_version`; older inventories migrate
+automatically, including per-copy progress labels and save sizes.
+Existing inventory/history is retained. A newer database is rejected.
 SQLite has foreign keys, WAL journaling, per-request connections, atomic
 location inventory commits, and a unique active scan per device.
 

@@ -6,6 +6,7 @@ from importlib.resources import files
 import json
 import logging
 from urllib.parse import urlsplit
+from save_core.save_copy import CopyApplyError
 from .icons import IconCache
 
 
@@ -22,7 +23,7 @@ class Application:
             status, payload, mime, extra = 404, {'error': str(error)}, 'application/json', []
         except (ValueError, TypeError) as error:
             status, payload, mime, extra = 400, {'error': str(error)}, 'application/json', []
-        except OSError as error:
+        except (OSError, CopyApplyError) as error:
             status, payload, mime, extra = 409, {'error': str(error)}, 'application/json', []
         except Exception:
             logging.exception('Web request failed')

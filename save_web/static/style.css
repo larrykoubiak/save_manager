@@ -20,6 +20,8 @@ button, a, input, select, summary, [tabindex] { outline-offset: 3px; }
 button { cursor: pointer; border: 1px solid #415c83; border-radius: 3px; background: #070d1b; color: #cbdcf6; padding: 6px 10px; }
 button:hover { background: #132442; border-color: #8eafdd; color: #f5e9ae; box-shadow: 0 0 9px #5c9bdb33; }
 button:disabled { opacity: .5; cursor: default; }
+button.danger { color: #ffb5b5; border-color: #9c555f; }
+button.danger:hover { background: #3a1521; border-color: #e48b98; }
 .primary { color: #eaf2ff; background: #162e51; border-color: #6284b6; }
 .primary:hover { background: #24446d; }
 a { color: inherit; }
@@ -71,6 +73,8 @@ code { font-family: ui-monospace, monospace; font-size: 11px; overflow-wrap: any
 .copy-heading { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
 .copy-heading strong { font-size: 12px; overflow-wrap: anywhere; }
 .copy-heading button { font-size: 11px; padding: 3px 6px; white-space: nowrap; }
+.copy-progress { margin-top: 8px; }
+.copy-progress strong { display: block; font-size: 12px; margin-top: 3px; }
 .copy-date { font-size: 12px; margin-top: 5px; }
 .copy-details { font-size: 11px; margin-top: 5px; color: var(--muted); }
 summary { cursor: pointer; }
@@ -148,3 +152,8 @@ progress { width: 100%; height: 8px; accent-color: var(--accent); }
 button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px solid #97c9ff; }
 input::placeholder { color: #8d9db8; opacity: 1; }
 ::selection { background: #355c91; color: #fff; }
+
+.matrix .size-column, .matrix .save-size { width: 125px; min-width: 125px; max-width: 125px; text-align: right; white-space: nowrap; }
+.save-size { font-variant-numeric: tabular-nums; }
+.sort-heading { background: transparent; border: 0; padding: 3px 0; color: inherit; font: inherit; font-weight: 600; }
+.sort-heading:hover { color: #f2e7b1; background: transparent; }

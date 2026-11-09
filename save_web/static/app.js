@@ -6,6 +6,8 @@ let data = {devices:[],locations:[],cards:[],saves:[],slots:[],jobs:[],transfers
 let selectedDevice = null, selectedSave = null, preview = null, transferBusy = false, managedDevice = null;
 let renderedLibrary = '';
 let selectedSourceSlot = null;
+let deletingSave = false;
+let librarySort = 'name-asc';
 
 async function api(path, body, method='POST') {
   const options = body === undefined ? {} : {method, headers:{'Content-Type':'application/json','X-Save-Manager':'1'}, body:JSON.stringify(body)};
@@ -28,12 +30,13 @@ function canTransfer(save) {
   const card = data.cards.find(c => c.id === save.card_id);
   return save.present && card?.present && locationOf(card)?.status === 'online';
 }
+function canDelete(save) { return canTransfer(save) && locationOf(data.cards.find(c => c.id === save.card_id))?.writable; }
 function slotsFor(save) { return (data.slots || []).filter(slot => slot.save_id === save?.id); }
 function renderSlots(save) {
   const slots = slotsFor(save);
   if (!slots.length) return '';
   const occupied = slots.filter(slot => slot.state !== 'empty'), empty = slots.filter(slot => slot.state === 'empty');
-  return `<div class="slot-list"><strong>Save slots · ${occupied.length} / ${slots.length}</strong>${occupied.map(slot => `<div class="slot-entry"><div>Slot ${slot.number}<small>${h(slot.label || slot.state)}${slot.error?'<br>'+h(slot.error):''}</small><code title="Matching content has the same identifier across slot numbers">${h(slot.sha256?.slice(0,8) || '')}</code></div><button data-action="slot-copy" data-id="${save.id}" data-slot="${slot.number}" ${canTransfer(save) && slot.state==='occupied'?'':'disabled'} aria-label="Copy slot ${slot.number} from ${h(data.cards.find(c=>c.id===save.card_id)?.filename)}">Copy…</button></div>`).join('') || '<small>No occupied slots</small>'}<small class="empty-slots">Empty: ${empty.map(slot => slot.number).join(', ') || 'None'}</small></div>`;
+  return `<div class="slot-list"><strong>Save slots · ${slots.filter(slot => slot.state === 'occupied').length} / ${slots.length}</strong>${occupied.map(slot => `<div class="slot-entry"><div>Slot ${slot.number}<small>${h(slot.label || slot.state)}${slot.error?'<br>'+h(slot.error):''}</small><code title="Matching content has the same identifier across slot numbers">${h(slot.sha256?.slice(0,8) || '')}</code></div><button data-action="slot-copy" data-id="${save.id}" data-slot="${slot.number}" ${canTransfer(save) && slot.state==='occupied'?'':'disabled'} aria-label="Copy slot ${slot.number} from ${h(data.cards.find(c=>c.id===save.card_id)?.filename)}">Copy…</button></div>`).join('') || '<small>No occupied slots</small>'}<small class="empty-slots">Empty: ${empty.map(slot => slot.number).join(', ') || 'None'}</small></div>`;
 }
 function switchView(view) {
   for (const name of ['devices','library','activity']) $(`#${name}-view`).hidden = name !== view;
@@ -75,21 +78,39 @@ function renderManage() {
   $('#manage-title').textContent = device.name;
   $('#manage-content').innerHTML = `<p class="hint">${h(device.kind)} · ${h(schedule(device.poll_seconds))} · Last seen ${h(when(device.last_seen))}</p><div class="table-actions"><button data-action="edit-device" data-id="${device.id}">Device settings</button><button data-action="cards" data-id="${device.id}">View cards</button><button data-action="add-location" data-id="${device.id}">Add location</button></div><h3>Locations</h3>${locationList(device.id)}`;
 }
+function sizeText(blocks) { return Number.isInteger(blocks) ? `${blocks.toLocaleString()} KiB` : '—'; }
+function saveSizes(saves) { return saves.map(s => s.size_blocks).filter(Number.isInteger); }
+function rowSize(saves) { const sizes = saveSizes(saves); return sizes.length ? Math.max(...sizes) : null; }
+function sizeRange(saves) {
+  const sizes = saveSizes(saves);
+  if (!sizes.length) return '—';
+  const min = Math.min(...sizes), max = Math.max(...sizes);
+  return min === max ? sizeText(max) : `${min.toLocaleString()}–${max.toLocaleString()} KiB`;
+}
+function rowTitle(directory, saves) { return saves.find(s => s.row_title)?.row_title || saves.find(s => s.title)?.title || directory; }
 function renderLibrary() {
   const query = $('#search').value.trim().toLowerCase(), groups = new Map();
   for (const save of currentSaves()) {
     if (!groups.has(save.directory)) groups.set(save.directory, []);
     groups.get(save.directory).push(save);
   }
-  const rows = [...groups].filter(([directory,saves]) => saves.some(s => [directory,s.title,cardLabel(data.cards.find(c => c.id === s.card_id))].join(' ').toLowerCase().includes(query)))
-    .sort((a,b) => (a[1].find(s => s.title)?.title || a[0]).localeCompare(b[1].find(s => s.title)?.title || b[0], undefined, {numeric:true}));
+  const rows = [...groups].filter(([directory,saves]) => saves.some(s => [directory,s.title,s.row_title,s.summary,cardLabel(data.cards.find(c => c.id === s.card_id))].join(' ').toLowerCase().includes(query)))
+    .sort((a,b) => {
+      if (librarySort.startsWith('size-')) {
+        const left = rowSize(a[1]), right = rowSize(b[1]);
+        if (left === null && right !== null) return 1;
+        if (right === null && left !== null) return -1;
+        if (left !== right) return (left - right) * (librarySort === 'size-desc' ? -1 : 1);
+      }
+      return rowTitle(...a).localeCompare(rowTitle(...b), undefined, {numeric:true}) * (librarySort === 'name-desc' ? -1 : 1);
+    });
   $('#save-count').textContent = `${rows.length} / ${groups.size} save entries`;
   if (!data.devices.length) { $('#library').innerHTML = noDevices(); renderedLibrary = ''; return; }
   const animation = $('#animate-icons').checked ? '?v=3' : '?v=3&static=1';
-  const html = `<table class="matrix comparison"><caption class="sr-only">Save copies by device</caption><thead><tr><th scope="col">Save</th>${data.devices.map(deviceHeader).join('')}</tr></thead><tbody>${rows.map(([directory,saves]) => {
+  const html = `<table class="matrix comparison"><caption class="sr-only">Save copies by device</caption><thead><tr><th scope="col" aria-sort="${librarySort === 'name-asc' ? 'ascending' : librarySort === 'name-desc' ? 'descending' : 'none'}"><button class="sort-heading" data-action="sort-name" title="Sort by save name A–Z or Z–A">Save ${librarySort === 'name-asc' ? '↑' : librarySort === 'name-desc' ? '↓' : '↕'}</button></th><th scope="col" class="size-column" aria-sort="${librarySort === 'size-desc' ? 'descending' : librarySort === 'size-asc' ? 'ascending' : 'none'}"><button class="sort-heading" data-action="sort-size" title="Card space including icons and directory overhead. Ranges show different copies; sorting uses the largest copy.">Size ${librarySort === 'size-desc' ? '↓' : librarySort === 'size-asc' ? '↑' : '↕'}</button></th>${data.devices.map(deviceHeader).join('')}</tr></thead><tbody>${rows.map(([directory,saves]) => {
     const different = new Set(saves.map(s => s.sha256)).size > 1;
     const icon = saves.find(s => s.icon_hash)?.icon_hash || 'placeholder';
-    return `<tr data-save="${h(directory)}"><th scope="row"><div class="save-label"><img class="save-icon" src="/api/icons/${h(icon)}.gif${animation}" alt="" width="64" height="64" loading="lazy"><div><strong>${h(saves.find(s => s.title)?.title || directory)}</strong><small class="directory">${h(directory)}</small>${badge(different?'partial':saves.length>1?'online':'never', different?'Different copies':saves.length>1?'Matching copies':'Single copy')}</div></div></th>${data.devices.map(device => {
+    return `<tr data-save="${h(directory)}"><th scope="row"><div class="save-label"><img class="save-icon" src="/api/icons/${h(icon)}.gif${animation}" alt="" width="64" height="64" loading="lazy"><div><strong>${h(rowTitle(directory, saves))}</strong><small class="directory">${h(directory)}</small>${badge(different?'partial':saves.length>1?'online':'never', different?'Different copies':saves.length>1?'Matching copies':'Single copy')}</div></div></th><td class="save-size" data-size="${rowSize(saves) ?? ''}" title="Memory-card space including icons and directory overhead; range across copies">${h(sizeRange(saves))}</td>${data.devices.map(device => {
       const copies = saves.filter(s => deviceOf(data.cards.find(c => c.id === s.card_id))?.id === device.id);
       if (!copies.length) {
         const uncertain = device.status !== 'online';
@@ -97,10 +118,10 @@ function renderLibrary() {
       }
       return `<td>${copies.map(s => {
         const card = data.cards.find(c => c.id === s.card_id), location = locationOf(card);
-        return `<div class="save-copy"><div class="copy-heading"><strong>${h(card.filename)}</strong><button data-action="transfer" data-id="${s.id}" ${canTransfer(s)?'':'disabled'}>${slotsFor(s).length?'Whole save…':'Transfer…'}</button></div><small>${h(location.name)}${location.status !== 'online'?' · '+h(location.status):''}</small><div class="copy-date">${h(s.updated || 'Unknown card date')}</div>${renderSlots(s)}<details class="copy-details"><summary>Details</summary><code>${h(s.sha256.slice(0,12))}</code><small>Last observed ${h(when(s.last_seen))}<br>${s.version_count} content version${s.version_count===1?'':'s'} observed</small></details></div>`;
+        return `<div class="save-copy"><div class="copy-heading"><strong>${h(card.filename)}</strong><div class="table-actions"><button data-action="transfer" data-id="${s.id}" ${canTransfer(s)?'':'disabled'}>${slotsFor(s).length?'Whole save…':'Transfer…'}</button><button class="danger" data-action="delete-save" data-id="${s.id}" ${canDelete(s)?'':'disabled'}>Delete…</button></div></div><small>${h(location.name)}${location.status !== 'online'?' · '+h(location.status):''} · ${h(sizeText(s.size_blocks))}</small><div class="copy-progress"><small>${h(s.title || s.directory)}</small>${s.summary?`<strong>${h(s.summary)}</strong>`:''}</div><div class="copy-date">${h(s.updated || 'Unknown card date')}</div>${renderSlots(s)}<details class="copy-details"><summary>Details</summary><code>${h(s.sha256.slice(0,12))}</code><small>Last observed ${h(when(s.last_seen))}<br>${s.version_count} content version${s.version_count===1?'':'s'} observed</small></details></div>`;
       }).join('')}</td>`;
     }).join('')}</tr>`;
-  }).join('') || `<tr><td colspan="${data.devices.length+1}" class="empty">${groups.size?'No matching saves.':'No saves discovered yet. Scan a device to populate the table.'}</td></tr>`}</tbody></table>`;
+  }).join('') || `<tr><td colspan="${data.devices.length+2}" class="empty">${groups.size?'No matching saves.':'No saves discovered yet. Scan a device to populate the table.'}</td></tr>`}</tbody></table>`;
   if (html === renderedLibrary) return;
   renderedLibrary = html;
   // Preserve open details, icons and scroll position during background refreshes.
@@ -122,7 +143,7 @@ function renderCards() {
   $('#cards-content').innerHTML = cards.map(c => {
     const location = locationOf(c), saves = data.saves.filter(s => s.card_id === c.id && s.present);
     return `<article><div class="save-heading"><h3>${h(c.filename)}</h3>${badge(c.present?location.status:'offline',c.present?undefined:'Missing at last scan')}</div><p class="hint">${h(location.name)} · ${c.formatted?`${c.free_blocks.toLocaleString()} / ${c.total_blocks.toLocaleString()} KiB free`:'Unformatted card'} · Last seen ${h(when(c.last_seen))}</p>${c.formatted?`<progress max="${c.total_blocks}" value="${c.total_blocks-c.free_blocks}" aria-label="Card capacity used"></progress>`:''}
-      <div class="table-wrap"><table><thead><tr><th>Save</th><th>Directory</th><th></th></tr></thead><tbody>${saves.map(s => `<tr><td>${h(s.title || s.directory)}</td><td>${h(s.directory)}</td><td><button data-action="transfer" data-id="${s.id}" ${canTransfer(s)?'':'disabled'}>Transfer…</button></td></tr>`).join('') || '<tr><td colspan="3">No saves in the last known inventory.</td></tr>'}</tbody></table></div></article>`;
+      <div class="table-wrap"><table><thead><tr><th>Save</th><th>Directory</th><th></th></tr></thead><tbody>${saves.map(s => `<tr><td>${h(s.title || s.directory)}</td><td>${h(s.directory)}</td><td><div class="table-actions"><button data-action="transfer" data-id="${s.id}" ${canTransfer(s)?'':'disabled'}>Transfer…</button><button class="danger" data-action="delete-save" data-id="${s.id}" ${canDelete(s)?'':'disabled'}>Delete…</button></div></td></tr>`).join('') || '<tr><td colspan="3">No saves in the last known inventory.</td></tr>'}</tbody></table></div></article>`;
   }).join('') || '<div class="empty">No cards discovered yet. Add a location and scan this device.</div>';
 }
 function renderActivity() {
@@ -164,15 +185,17 @@ function updateDestinationSlots() {
   const empty = slots.find(slot => slot.state === 'empty');
   if (empty) select.value = empty.number;
 }
-function openTransfer(id, slotNumber=null) {
+function openTransfer(id, slotNumber=null, deleting=false) {
+  deletingSave = deleting;
   selectedSourceSlot = slotNumber;
   selectedSave = data.saves.find(s => s.id === id); preview = null;
   const card = data.cards.find(c => c.id === selectedSave.card_id), form = $('#transfer-form');
   const isSlot = selectedSourceSlot !== null;
-  $('#transfer-form .dialog-heading h2').textContent = isSlot ? 'Copy a save slot' : 'Transfer a save';
+  $('#transfer-form .dialog-heading h2').textContent = deletingSave ? 'Delete a save from this card' : isSlot ? 'Copy a save slot' : 'Transfer a save';
+  $('#idle-text').textContent = deletingSave ? 'Games and emulators using this card are closed on every device.' : 'Games and emulators using both cards are closed on every device.';
   $('#conflict-label').textContent = isSlot ? 'If the destination slot is occupied' : 'If a different save occupies the same directory';
   form.reset(); form.querySelector('.form-error').textContent = '';
-  $('#transfer-source').innerHTML = `<strong>${h(selectedSave.title || selectedSave.directory)}${isSlot?' · source slot '+selectedSourceSlot:''}</strong><br>${h(cardLabel(card))}<br><code>${h(selectedSave.directory)}</code>`;
+  $('#transfer-source').innerHTML = `<strong>${h(selectedSave.title || selectedSave.directory)}${isSlot?' · source slot '+selectedSourceSlot:''}</strong><br>${h(cardLabel(card))}<br><code>${h(selectedSave.directory)}</code>${deletingSave?'<p class="error-text">This removes the entire save from this card, including every slot inside it. Copies on other cards are kept.</p>':''}`;
   const destinations = data.cards.filter(c => {
     if (!c.present || !c.formatted || (!isSlot && c.id === card.id) || !locationOf(c)?.writable || locationOf(c)?.status !== 'online') return false;
     if (!isSlot) return true;
@@ -185,13 +208,17 @@ function openTransfer(id, slotNumber=null) {
   form.elements.destination_slot.disabled = !isSlot;
   form.elements.conflict.innerHTML = isSlot
     ? '<option value="stop">Stop if the destination slot is occupied</option><option value="replace">Replace the selected destination slot</option>'
-    : '<option value="stop">Stop and ask me</option><option value="keep_both">Keep both in unused slots (supported games)</option><option value="replace">Replace destination save</option>';
+    : '<option value="stop">Stop and ask me</option><option value="keep_both">Keep both (supported games)</option><option value="replace">Replace destination save</option>';
   form.elements.destination_card_id.innerHTML = '<option value="">Choose a card…</option>' + destinations.map(c => `<option value="${c.id}">${h(cardLabel(c))} · ${c.free_blocks} KiB free</option>`).join('');
+  form.elements.destination_card_id.required = !deletingSave;
+  form.elements.destination_card_id.disabled = deletingSave;
   if (isSlot) updateDestinationSlots();
-  $('#transfer-options').hidden = false; $('#transfer-preview').hidden = true; $('#idle-label').hidden = true;
-  $('#transfer-submit').textContent = 'Preview transfer'; $('#transfer-submit').disabled = !destinations.length;
-  if (!destinations.length) form.querySelector('.form-error').textContent = isSlot
-    ? 'No writable destination with a valid Ar tonelico save is available. Create a save in-game first, enable transfers, and scan its device.'
+  $('#transfer-options').hidden = deletingSave; $('#transfer-preview').hidden = true; $('#idle-label').hidden = true;
+  $('#transfer-submit').textContent = deletingSave ? 'Preview deletion' : 'Preview transfer';
+  $('#transfer-submit').classList.toggle('danger', deletingSave);
+  $('#transfer-submit').disabled = deletingSave ? !canDelete(selectedSave) : !destinations.length;
+  if (!deletingSave && !destinations.length) form.querySelector('.form-error').textContent = isSlot
+    ? 'No writable destination with a valid save for this game is available. Create a save in-game first, enable transfers, and scan its device.'
     : 'No destination is available. Add another location, enable reviewed transfers, and scan it successfully.';
   $('#transfer-dialog').showModal();
 }
@@ -226,23 +253,24 @@ $('#transfer-form').addEventListener('submit', event => {
     transferBusy = true;
     try {
       if (!preview) {
-        const body = {save_id:selectedSave.id,destination_card_id:Number(form.elements.destination_card_id.value),conflict:form.elements.conflict.value};
+        const body = deletingSave ? {save_id:selectedSave.id,action:'delete'} : {save_id:selectedSave.id,destination_card_id:Number(form.elements.destination_card_id.value),conflict:form.elements.conflict.value};
         if (selectedSourceSlot !== null) Object.assign(body, {source_slot:selectedSourceSlot,destination_slot:Number(form.elements.destination_slot.value)});
         const result = await api('transfers/preview',body);
         preview = result;
         $('#transfer-options').hidden = true; $('#transfer-preview').hidden = false; $('#idle-label').hidden = false;
-        $('#transfer-preview').innerHTML = `<p><strong>${h(result.action)}</strong><br>From: ${h(result.source)}<br>To: ${h(result.destination)}<br>Destination directory: <code>${h(result.destination_save)}</code></p>${result.warnings.map(w => `<p class="error-text">${h(w)}</p>`).join('')}<p class="hint">Preview expires in 10 minutes. A verified backup is required before any replacement. Both cards will be checked again before writing.</p>`;
-        $('#transfer-submit').textContent = 'Confirm transfer';
+        $('#transfer-preview').innerHTML = `<p><strong>${h(result.action)}</strong><br>${deletingSave?'Card: '+h(result.destination):'From: '+h(result.source)+'<br>To: '+h(result.destination)}<br>${deletingSave?'Remove':'Destination directory'}: <code>${h(result.destination_save)}</code></p>${result.warnings.map(w => `<p class="error-text">${h(w)}</p>`).join('')}<p class="hint">Preview expires in 10 minutes. A full card backup will be saved before writing. ${deletingSave?'The card':'Both cards'} will be checked again before writing.</p>`;
+        $('#transfer-submit').textContent = deletingSave ? 'Confirm deletion' : 'Confirm transfer';
       } else {
-        if (!form.elements.cards_idle.checked) throw new Error('Confirm that games and emulators using both cards are closed.');
+        if (!form.elements.cards_idle.checked) throw new Error(deletingSave ? 'Confirm that games and emulators using this card are closed.' : 'Confirm that games and emulators using both cards are closed.');
         const key = preview.id;
         try {
           const result = await api(`transfers/${key}/apply`,{cards_idle:true});
           preview = null; $('#transfer-dialog').close();
-          notice(result.backup?`Transfer complete. Backup: ${result.backup}`:'The save is already identical. No write was needed.');
+          notice(result.backup?`${deletingSave?'Save deleted':'Transfer complete'}. Backup: ${result.backup}`:'The save is already identical. No write was needed.');
         } catch (error) {
-          preview = null; $('#transfer-options').hidden = false; $('#transfer-preview').hidden = true; $('#idle-label').hidden = true;
-          $('#transfer-submit').textContent = 'Preview transfer'; throw error;
+          preview = null; $('#transfer-options').hidden = deletingSave; $('#transfer-preview').hidden = true; $('#idle-label').hidden = true;
+          form.elements.cards_idle.checked = false;
+          $('#transfer-submit').textContent = deletingSave ? 'Preview deletion' : 'Preview transfer'; throw error;
         }
       }
       await refresh();
@@ -269,6 +297,9 @@ document.addEventListener('click', async event => {
       case 'scan': button.disabled = true; await api(`devices/${id}/scan`,{}); await refresh(); break;
       case 'cards': selectedDevice = id; renderCards(); $('#cards-dialog').showModal(); break;
       case 'transfer': openTransfer(id); break;
+      case 'delete-save': openTransfer(id, null, true); break;
+      case 'sort-size': librarySort = librarySort === 'size-desc' ? 'size-asc' : 'size-desc'; renderLibrary(); break;
+      case 'sort-name': librarySort = librarySort === 'name-asc' ? 'name-desc' : 'name-asc'; renderLibrary(); break;
       case 'slot-copy': openTransfer(id, Number(button.dataset.slot)); break;
       case 'cancel-preview': await api(`transfers/${button.dataset.id}/cancel`,{}); await refresh(); break;
     }

@@ -60,6 +60,21 @@ def entries(card, path):
         directory.close()
 
 
+def save_size_blocks(card, path, entry, ancestors=frozenset()):
+    """Space in 1 KiB blocks, including file rounding and directory entries."""
+    is_directory = mode_is_dir(entry[0])
+    length = entry[2] * 512 if is_directory else entry[2]
+    blocks = ((length + card.cluster_size - 1) // card.cluster_size) * card.cluster_size // 1024
+    if is_directory:
+        cluster = entry[4]
+        if cluster in ancestors:
+            raise ValueError('Directory cycle in ' + path)
+        for child in entries(card, path):
+            blocks += save_size_blocks(card, path + '/' + child[8].decode('ascii'),
+                                       child, ancestors | {cluster})
+    return blocks
+
+
 def updated(card, path, entry, ancestors=frozenset()):
     """Include contained files: the save directory date alone can be stale."""
     dates = [card_time(entry[6])]
@@ -95,6 +110,7 @@ def read_card(path, usage=None):
                     'save': save,
                     'title': ' '.join(unicodedata.normalize('NFKC', title).split()),
                     'card': path.name,
+                    'size_blocks': save_size_blocks(card, directory, entry),
                     'updated': updated(card, directory, entry),
                 }
                 records.append(record)

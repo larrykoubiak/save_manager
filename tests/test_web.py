@@ -59,6 +59,19 @@ class WebTest(unittest.TestCase):
         target = next(c for c in inventory['cards'] if c['filename'] == 'target.bin')
         return source_save, target
 
+    def test_ffx_scan_keeps_copy_title_and_verified_playtime_after_restart(self):
+        from test_ffx_slots import source_save
+        card_file(self.source / 'ffx.ps2', [source_save()], True)
+        self.assertEqual(self.scan()['status'], 'done')
+        save = self.service.inventory()['saves'][0]
+        self.assertIn('Besaid', save['title'])
+        self.assertEqual(save['row_title'], 'Final Fantasy X International · Slot 1')
+        self.assertEqual(save['summary'], 'Playtime 1:16:35')
+        self.assertEqual(self.service.inventory()['slots'], [])
+        reopened = Service(self.root / 'data')
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened.inventory()['saves'][0], save)
+
     def test_database_survives_restart_with_cards_and_versions(self):
         self.cards()
         original = self.service.inventory()
@@ -67,6 +80,8 @@ class WebTest(unittest.TestCase):
         for collection in ['devices', 'locations', 'cards', 'saves']:
             self.assertEqual(original[collection], reopened.inventory()[collection])
         self.assertEqual(original['saves'][0]['version_count'], 1)
+        # One 12-byte file uses one block, plus two blocks for three directory entries.
+        self.assertEqual(original['saves'][0]['size_blocks'], 3)
 
     def test_unavailable_location_preserves_last_known_inventory(self):
         self.cards()
@@ -147,6 +162,35 @@ class WebTest(unittest.TestCase):
         self.service.enqueue_due(at=10**12)
         self.assertEqual(len(self.service.inventory()['jobs']), 1)
 
+    def test_reviewed_deletion_backup_cancel_and_rescan(self):
+        save, target = self.cards()
+        original = (self.source / 'source.ps2').read_bytes()
+        body = {'save_id':save['id'], 'action':'delete'}
+        status, error, _ = self.request('/api/transfers/preview', body, 'POST')
+        self.assertEqual(status, 400)  # Source location is read-only.
+        self.service.save_location(self.pc['id'], {'writable':True}, self.pc_location['id'])
+        status, preview, _ = self.request('/api/transfers/preview', body, 'POST')
+        self.assertEqual(status, 201, preview)
+        self.assertEqual(preview['action'], 'Delete save')
+        self.assertEqual((self.source / 'source.ps2').read_bytes(), original)
+        self.request(f"/api/transfers/{preview['id']}/cancel", {}, 'POST')
+        status, _, _ = self.request(f"/api/transfers/{preview['id']}/apply", {'cards_idle':True}, 'POST')
+        self.assertEqual(status, 400)
+        status, preview, _ = self.request('/api/transfers/preview', body, 'POST')
+        status, _, _ = self.request(f"/api/transfers/{preview['id']}/apply", {}, 'POST')
+        self.assertEqual(status, 400)
+        status, result, _ = self.request(f"/api/transfers/{preview['id']}/apply", {'cards_idle':True}, 'POST')
+        self.assertEqual(status, 200, result)
+        self.assertEqual(Path(result['backup']).read_bytes(), original)
+        self.assertNotIn('/MY-GAME', snapshot(self.source / 'source.ps2'))
+        self.assertIn('/OTHER-GAME', snapshot(self.destination / 'target.bin'))
+        self.service.run_scan(self.service.inventory()['jobs'][0]['id'])
+        current = [s for s in self.service.inventory()['saves'] if s['present']]
+        self.assertNotIn(save['id'], [s['id'] for s in current])
+        with self.service.db.connect() as db:
+            transfer = dict(db.execute('SELECT * FROM transfers WHERE id=?', (preview['id'],)).fetchone())
+        self.assertEqual(transfer['status'], 'done')
+
     def test_reviewed_http_transfer_backup_and_destination_rescan(self):
         save, target = self.cards()
         before = (self.destination / 'target.bin').read_bytes()
@@ -194,6 +238,19 @@ class WebTest(unittest.TestCase):
                 self.assertEqual(self.service.db.one('SELECT status FROM transfers WHERE id=?', (preview['id'],))['status'], 'failed')
                 self.assertFalse((self.root / 'data' / 'backups').exists())
                 (self.destination / 'target.bin').write_bytes(original)
+
+    def test_failed_rename_returns_actionable_error_and_records_backup(self):
+        save, target = self.cards()
+        preview = self.service.preview({'save_id':save['id'], 'destination_card_id':target['id']})
+        original = (self.destination / 'target.bin').read_bytes()
+        with patch('save_core.save_copy.os.replace', side_effect=FileNotFoundError('WebDAV staging file missing')):
+            status, body, _ = self.request(f"/api/transfers/{preview['id']}/apply", {'cards_idle':True}, 'POST')
+        self.assertEqual(status, 409)
+        self.assertIn('Destination was not replaced', body['error'])
+        transfer = self.service.db.one('SELECT * FROM transfers WHERE id=?', (preview['id'],))
+        self.assertEqual(transfer['status'], 'failed')
+        self.assertEqual(Path(transfer['backup']).read_bytes(), original)
+        self.assertEqual((self.destination / 'target.bin').read_bytes(), original)
 
     def test_preview_expiry_cancel_and_restart(self):
         save, target = self.cards()

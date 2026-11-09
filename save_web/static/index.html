@@ -40,7 +40,7 @@
     <label>Folder path<input name="path" required placeholder="/cards/ps2" maxlength="4096"></label><p class="hint">Use the path visible to the server. In Docker, mount the folder first. Folders are scanned directly, without subfolders.</p>
     <label>Card format<select name="suffix"><option value=".ps2">PS2 · .ps2 images</option><option value=".bin">PS2 · .bin VMC images</option></select></label>
     <label>Availability marker <span class="optional">(optional)</span><input name="marker" maxlength="200" placeholder=".save-manager-online"></label><p class="hint">An existing file on the mounted device. If missing, the location is treated as offline, even if its empty mount folder remains.</p>
-    <label class="checkbox"><input type="checkbox" name="writable"> Allow reviewed transfers into this location</label>
+    <label class="checkbox"><input type="checkbox" name="writable"> Allow writes into this location (transfers and deletion)</label>
     <p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Save location</button></div>
   </form></dialog>
   <dialog id="cards-dialog" class="wide"><div class="dialog-heading"><h2 id="cards-title">Memory cards</h2><button class="icon-button" data-close aria-label="Close">×</button></div><div id="cards-content"></div></dialog>
@@ -49,7 +49,7 @@
     <div id="transfer-options"><label>Destination card<select name="destination_card_id" required></select></label>
       <div id="slot-controls" hidden><label>Destination slot<select name="destination_slot"></select></label><p class="hint">Only the selected slot changes. Other slots, configuration and icons are preserved.</p></div>
       <label><span id="conflict-label">If a different save occupies the same directory</span><select name="conflict"><option value="stop">Stop and ask me</option><option value="keep_both">Keep both in unused slots (supported games)</option><option value="replace">Replace destination save</option></select></label></div>
-    <div id="transfer-preview" hidden></div><label id="idle-label" class="checkbox" hidden><input name="cards_idle" type="checkbox"> Games and emulators using both cards are closed on every device.</label>
+    <div id="transfer-preview" hidden></div><label id="idle-label" class="checkbox" hidden><input name="cards_idle" type="checkbox"> <span id="idle-text">Games and emulators using both cards are closed on every device.</span></label>
     <p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button class="primary" id="transfer-submit" type="submit">Preview transfer</button></div>
   </form></dialog>
 </body>

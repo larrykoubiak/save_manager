@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 
-from save_core.save_copy import apply_copy, plan_copy, plan_slot_copy
+from save_core.save_copy import apply_copy, plan_copy, plan_slot_copy, plan_delete
 from save_core.save_merge import digest, stable_read
 from .database import Database
 from .inventory import card_path, snapshot_location
@@ -151,10 +151,12 @@ class Service:
                     icon_hash = digest(model) if model else None
                     if model:
                         db.execute('INSERT OR IGNORE INTO icons(sha256,model) VALUES (?,?)', (icon_hash, model))
-                    db.execute('''INSERT INTO saves(card_id,directory,title,updated,sha256,last_seen,icon_hash) VALUES (?,?,?,?,?,?,?)
+                    db.execute('''INSERT INTO saves(card_id,directory,title,updated,sha256,last_seen,icon_hash,row_title,summary,size_blocks) VALUES (?,?,?,?,?,?,?,?,?,?)
                                   ON CONFLICT(card_id,directory) DO UPDATE SET title=excluded.title,updated=excluded.updated,
-                                  sha256=excluded.sha256,last_seen=excluded.last_seen,icon_hash=excluded.icon_hash,present=1''',
-                               (card_id, save['save'], save['title'], updated, save['sha256'], timestamp, icon_hash))
+                                  sha256=excluded.sha256,last_seen=excluded.last_seen,icon_hash=excluded.icon_hash,
+                                  row_title=excluded.row_title,summary=excluded.summary,size_blocks=excluded.size_blocks,present=1''',
+                               (card_id, save['save'], save['title'], updated, save['sha256'], timestamp, icon_hash,
+                                save.get('row_title', ''), save.get('summary', ''), save.get('size_blocks')))
                     save_id = db.execute('SELECT id FROM saves WHERE card_id=? AND directory=?', (card_id, save['save'])).fetchone()[0]
                     db.execute('DELETE FROM save_slots WHERE save_id=?', (save_id,))
                     for slot in save.get('slots', []):
@@ -254,14 +256,24 @@ class Service:
 
     def preview(self, body):
         with self.lock:
+            action = body.get('action', 'copy')
+            if action not in ('copy', 'delete'):
+                raise ValueError('Unknown save action.')
             self._expire_previews()
             if len(self.previews) >= 4:
                 raise ValueError('Four previews are already open. Cancel one or wait ten minutes.')
             save = self.db.one('SELECT * FROM saves WHERE id=? AND present=1', (body.get('save_id'),))
-            source, _, source_path = self._card(save['card_id'])
-            destination, _, destination_path = self._card(body.get('destination_card_id'), writable=True)
+            source, _, source_path = self._card(save['card_id'], writable=action == 'delete')
+            if action == 'delete':
+                destination, destination_path = source, source_path
+            else:
+                destination, _, destination_path = self._card(body.get('destination_card_id'), writable=True)
             record = {'save': save['directory'], 'card_version': (source['size'], source['mtime_ns'])}
-            if 'source_slot' in body or 'destination_slot' in body:
+            if action == 'delete':
+                if 'source_slot' in body or 'destination_slot' in body:
+                    raise ValueError('Deletion removes a whole save directory, including all its slots.')
+                plan = plan_delete(source_path, record)
+            elif 'source_slot' in body or 'destination_slot' in body:
                 plan = plan_slot_copy(source_path, record, body.get('source_slot'), destination_path,
                                       body.get('destination_slot'), body.get('conflict', 'stop'))
             else:
@@ -307,7 +319,7 @@ class Service:
                 backup = apply_copy(plan, self.data_dir / 'backups')
             except Exception as error:
                 with self.db.connect() as db:
-                    db.execute("UPDATE transfers SET status='failed',finished=?,error=? WHERE id=?", (now(), str(error), key))
+                    db.execute("UPDATE transfers SET status='failed',finished=?,error=?,backup=? WHERE id=?", (now(), str(error), getattr(error, 'backup', None), key))
                 raise
             with self.db.connect() as db:
                 db.execute("UPDATE transfers SET status='done',finished=?,backup=? WHERE id=?", (now(), str(backup) if backup else None, key))

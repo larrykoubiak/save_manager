@@ -68,7 +68,7 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 3:
+            if version > 5:
                 raise ValueError('This database requires a newer Save Manager.')
             db.execute('PRAGMA journal_mode=WAL')
             db.executescript(SCHEMA)
@@ -78,7 +78,13 @@ class Database:
             for name in ('source_slot', 'destination_slot'):
                 if name not in columns:
                     db.execute(f'ALTER TABLE transfers ADD COLUMN {name} INTEGER')
-            db.execute('PRAGMA user_version=3')
+            save_columns = {row[1] for row in db.execute('PRAGMA table_info(saves)')}
+            for name in ('row_title', 'summary'):
+                if name not in save_columns:
+                    db.execute(f"ALTER TABLE saves ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+            if 'size_blocks' not in save_columns:
+                db.execute('ALTER TABLE saves ADD COLUMN size_blocks INTEGER')
+            db.execute('PRAGMA user_version=5')
 
     @contextmanager
     def connect(self):
