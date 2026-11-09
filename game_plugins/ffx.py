@@ -71,6 +71,16 @@ class FFXInternational:
         return int(save_directory[-2:]) + 1
 
     @classmethod
+    def summary(cls, save_directory, data):
+        decoded = cls.decode(save_directory, data)
+        progress = next((dict(section.fields) for section in decoded.sections
+                         if section.title == 'Progress'), None)
+        return {
+            'row_title': f'Final Fantasy X International · Slot {cls.slot_number(save_directory)}',
+            'summary': ('Playtime ' + progress['Playtime']) if progress else 'Playtime unavailable: checksum mismatch',
+        }
+
+    @classmethod
     def decode(cls, save_directory, data):
         if not cls.supports(save_directory):
             raise ValueError('This FFX region/save layout is not supported by this plugin.')

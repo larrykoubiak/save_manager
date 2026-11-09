@@ -162,3 +162,80 @@ successfully in-game on real PS2 hardware through OPL. The exact slot numbers
 and card formats were not specified; this confirms the reported workflow,
 not every slot/format combination or other regions. No private save or
 executable is distributed.
+
+## .hack//Infection (US PS2)
+
+`BASLUS-20267DOTHACK` has twelve 34,096-byte `dhdata01`–`dhdata12`
+files and a 336-byte index named after the directory. The plugin reads each
+28-byte index entry's occupancy, name, level, playtime (60 ticks/second),
+and 16-bit byte-sum checksum. Empty slots may retain arbitrary unused bytes.
+Copying preserves the chosen payload and its index entry exactly, updating
+only their destination positions. An existing destination save is required;
+occupied slots need explicit replacement. Other regions/parts are unsupported.
+
+Format reference: [piney_apples save research](https://github.com/Toyz/piney_apples/blob/main/docs/formats/save.md).
+Validated with synthetic raw/ECC cards and read-only previews of the existing
+US cards; in-game validation is still pending.
+
+## Katamari Damacy (US PS2)
+
+`BASLUS-21008Opt` contains three `katamari_save01`–`katamari_save03`
+files (7,072 bytes each) and a separate 1,008-byte options file named after
+the directory. Each has an eight-byte library header: CRC32 at +0 and a
+valid byte at +4. The CRC covers all bytes after that header. The slot menu
+uses the game record's +4 word (file offset 12) to distinguish occupied slots.
+Copying changes only the selected slot file, preserving its bytes and the
+destination options. Existing destination saves are required. Other regions
+and We Love Katamari are unsupported; in-game validation is pending.
+
+Derived from the user's US executable: CRC routine `0x1827b0`, header
+write/read `0x183ec8` / `0x184734`, and overlay 0 slot checks `0x1048798`.
+The overlay loads at `0x1038140`; its save descriptors at `0x1043638`
+handle the three 7,064-byte records plus 1,000-byte options independently.
+The [noclip extractor](https://github.com/magcius/noclip.website/blob/main/src/KatamariDamacy/tools/extractor.ts)
+provided the overlay location/compression reference. Executable and save bytes
+remain in the ignored local experiments directory; tests use synthetic data.
+
+## Steambot Chronicles (US PS2)
+
+`BASLUS-21344` has twelve `FILE_00`–`FILE_11` slots (67,568 bytes)
+and a separate 2,012-byte shared settings file. A slot wraps a 0x107d0-byte
+record at +16 with a stored file length, additive 32-bit word checksum,
+and 0x6219 trailer. The first 263 full 256-byte blocks use a fixed byte
+substitution plus the one-based block number; the tail remains plain.
+The game checks the occupied byte at file +0x4010. Playtime at +0x402c
+uses 30 ticks per second. Copying preserves the chosen encoded file exactly;
+settings, other slots and filesystem metadata remain unchanged.
+
+Derived from the user's US Undub executable: decode/check `0x31d6f4` and
+`0x31d93c`, encode `0x31e590`, substitution table `0x4dcfa0`, shared settings
+`0x31fc50` / `0x2943a0`, and playtime rendering `0x318920` (108000 ticks/hour,
+1800/minute). Incomplete saves can supply individually valid source slots;
+destinations require all twelve valid slot files and valid shared settings.
+Synthetic raw/ECC transfers and read-only previews with both existing cards
+are checked. In-game validation is pending; other regions are unsupported.
+
+## Tony Hawk's Pro Skater 4 careers (US PS2)
+
+Careers are separate named saves, not positions in a shared slot file.
+`BASLUS-20504` plus seven little-endian base-26 letters of the lowercase
+name CRC and a final `a` identifies a career. The 40,960-byte payload has
+summary CRC at +4, summary length at +8, used length at +12, and version 24
+at +16. The summary starts at +20. Both CRCs use CRC32 without the final
+XOR; the whole used span treats its first checksum word as zero.
+
+**Keep both** chooses an unused name such as `Larry 2`, rewrites only the
+summary's filename, envelope lengths/checksums, payload filename, directory
+and icon title. The serialized game state remains byte-identical; this does
+not combine goals/unlocks within a career. The icon model and original dates
+are preserved. Other regions and custom-skater/park saves are unsupported.
+
+Derived from the user's US executable: lowercase CRC `0x105aa0`, filename
+mapping `0x1e15e0`. Both checksums and generated names match the existing
+Larry/Den saves. Synthetic card transfers and read-only real-card previews
+pass; in-game validation is pending.
+
+THPS4 copy labels include the quick-load summary's `cash` and `numGoalsBeaten`
+fields. Compact integer types are verified against the executable's writer
+at `0x18a9a0` and reader at `0x18b2f0`–`0x18b3c0`. Unknown summary encodings
+leave progress unavailable. No playtime field has been verified.

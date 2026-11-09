@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from save_core.compare_saves import scan
 from game_plugins.ffx_slots import prepare_slot
-from save_core.save_copy import apply_copy, plan_copy, tree_snapshot
+from save_core.save_copy import apply_copy, plan_copy, plan_delete, tree_snapshot
 from test_ffx_slots import source_save
 from test_save_merge import card_file
 from vendor.mymcplusplus.mymcplusplus.ps2mc import ps2mc, PS2MC_FAT_ALLOCATED_BIT, PS2MC_FAT_CHAIN_END
@@ -49,6 +49,43 @@ class SaveCopyTest(unittest.TestCase):
         _, records = scan(self.emulator, '.ps2')
         self.record = next(r for r in records if r['save'].startswith('BISLPS'))
         self.backups = self.base / 'backups'
+
+    def test_delete_preserves_other_saves_and_card_format_with_full_backup(self):
+        for ecc in (False, True):
+            with self.subTest(ecc=ecc):
+                card_file(self.destination, [generic_save('DELETE-ME', b'remove'),
+                                            generic_save('DELETE-ME-KEEP', b'preserve')], ecc)
+                original = self.destination.read_bytes()
+                before = snapshot(self.destination)
+                plan = plan_delete(self.destination, {'save':'DELETE-ME'})
+                self.assertEqual(self.destination.read_bytes(), original)
+                backup = apply_copy(plan, self.backups)
+                self.assertEqual(backup.read_bytes(), original)
+                self.assertEqual(len(self.destination.read_bytes()), len(original))
+                self.assertEqual(snapshot(self.destination), {k:v for k,v in before.items()
+                                 if k != '/DELETE-ME' and not k.startswith('/DELETE-ME/')})
+                with self.destination.open('rb') as image:
+                    card = ps2mc(image)
+                    try:
+                        self.assertTrue(card.check())
+                    finally:
+                        card.close()
+
+    def test_delete_rejects_missing_save_and_unsafe_directory_names(self):
+        original = self.destination.read_bytes()
+        for name in ('', '.', '..', '/', 'OTHER-VMC/data.bin', 'missing'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                plan_delete(self.destination, {'save':name})
+        self.assertEqual(self.destination.read_bytes(), original)
+
+    def test_changed_card_cannot_apply_delete_preview(self):
+        plan = plan_delete(self.destination, {'save':'OTHER-VMC'})
+        changed = self.destination.read_bytes() + b'changed'
+        self.destination.write_bytes(changed)
+        with self.assertRaisesRegex(ValueError, 'changed since'):
+            apply_copy(plan, self.backups)
+        self.assertEqual(self.destination.read_bytes(), changed)
+        self.assertFalse(self.backups.exists())
 
     def test_both_directions_preserve_other_saves_format_and_backup(self):
         source_before, target_before = self.source.read_bytes(), self.destination.read_bytes()
@@ -146,7 +183,22 @@ class SaveCopyTest(unittest.TestCase):
         backups = list(self.backups.glob('*/target.bin'))
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_bytes(), original)
-        self.assertFalse(list(self.vmc.glob('.*-copy-*')))
+        self.assertFalse(list(self.vmc.glob('*-copy-*')))
+
+    def test_staging_works_when_mount_cannot_rename_hidden_files(self):
+        import os
+        plan = plan_copy(self.source, self.record, self.destination)
+        replace = os.replace
+
+        def webdav_replace(source, destination):
+            if Path(source).name.startswith('.'):
+                raise FileNotFoundError('WebDAV directory refresh hid the staging file')
+            return replace(source, destination)
+
+        with patch('save_core.save_copy.os.replace', side_effect=webdav_replace):
+            apply_copy(plan, self.backups)
+        self.assertEqual(self.destination.read_bytes(), plan.candidate)
+        self.assertFalse(list(self.vmc.glob('*-copy-*')))
 
     def test_backup_failure_prevents_destination_write(self):
         plan = plan_copy(self.source, self.record, self.destination)

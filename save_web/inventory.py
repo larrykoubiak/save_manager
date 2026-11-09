@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 
 from save_core.compare_saves import scan
-from game_plugins import plugin_for
+from game_plugins import plugin_for, slot_data
 from save_core.save_copy import image_file, tree_snapshot
 from save_core.save_merge import digest, stable_read
 from vendor.mymcplusplus.mymcplusplus.ps2mc import ps2mc
@@ -73,12 +73,22 @@ def snapshot_location(location):
                 record['slots'] = []
                 plugin = plugin_for(record['save'])
                 if callable(getattr(plugin, 'slots', None)):
-                    payload = tree.get(prefix + '/' + plugin.payload_name(record['save']), (None, b''))[1]
+                    payload = slot_data(plugin, record['save'], {
+                        name[len(prefix) + 1:]: contents for name, (_, contents) in tree.items()
+                        if name.startswith(prefix + '/') and contents is not None})
                     try:
                         record['slots'] = plugin.slots(record['save'], payload)
                     except ValueError as error:
                         # Preserve generic inventory for an unsupported payload.
                         record['slot_error'] = str(error)
+                if callable(getattr(plugin, 'summary', None)):
+                    payload = slot_data(plugin, record['save'], {
+                        name[len(prefix) + 1:]: contents for name, (_, contents) in tree.items()
+                        if name.startswith(prefix + '/') and contents is not None})
+                    try:
+                        record.update(plugin.summary(record['save'], payload))
+                    except ValueError as error:
+                        record['summary'] = 'Progress unavailable: ' + str(error)
                 record['icon_model'] = None
                 # A missing/bad icon must never hide an otherwise readable save.
                 try:

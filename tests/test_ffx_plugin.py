@@ -37,6 +37,8 @@ class FFXPluginTest(unittest.TestCase):
         data[252] ^= 1
         result = FFXInternational.decode('BISLPS-25088FF090600', bytes(data))
         self.assertEqual(result.status, 'Checksum mismatch')
+        summary = FFXInternational.summary('BISLPS-25088FF090600', bytes(data))
+        self.assertEqual(summary['summary'], 'Playtime unavailable: checksum mismatch')
         self.assertNotIn('Progress', [s.title for s in result.sections])
 
     def test_disagreeing_checksum_copies_are_rejected(self):

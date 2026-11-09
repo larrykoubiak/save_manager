@@ -11,7 +11,7 @@ import tempfile
 import uuid
 
 from .compare_saves import entries, erased_image
-from game_plugins import plugin_for
+from game_plugins import plugin_for, slot_data
 from .save_merge import digest, files, stable_read
 from vendor.mymcplusplus.mymcplusplus.ps2mc import ps2mc
 from vendor.mymcplusplus.mymcplusplus.ps2mc_dir import mode_is_dir, mode_is_file
@@ -21,6 +21,14 @@ _data_home = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local' / 's
 if not _data_home.is_absolute():
     _data_home = Path.home() / '.local' / 'share'
 DEFAULT_BACKUPS = _data_home / 'ps2-save-manager' / 'backups'
+
+
+class CopyApplyError(RuntimeError):
+    """A failed card replacement with a verified original backup."""
+
+    def __init__(self, message, backup):
+        super().__init__(message)
+        self.backup = str(backup)
 
 
 @dataclass(frozen=True)
@@ -76,6 +84,49 @@ def simple_save(card, name):
     return card.export_save_file('/' + name)
 
 
+def plan_delete(path, record):
+    """Remove one save directory in memory and verify every retained entry."""
+    path = Path(path).resolve()
+    name = record['save']
+    if not isinstance(name, str) or not name or name in ('.', '..') or '/' in name or '\\' in name:
+        raise ValueError('Choose one save directory to delete.')
+    version = record.get('card_version')
+    def check_version():
+        current = path.stat()
+        if version and (current.st_size, current.st_mtime_ns) != version:
+            raise ValueError('Card changed since the scan. Scan and preview again.')
+    check_version()
+    original = stable_read(path)
+    check_version()
+    with image_file(original, path) as image:
+        if erased_image(image):
+            raise ValueError('Card is unformatted.')
+        card = ps2mc(image)
+        try:
+            if not card.check():
+                raise ValueError('Card filesystem check failed.')
+            before = tree_snapshot(card)
+            root = '/' + name
+            if root not in before or before[root][1] is not None:
+                raise ValueError('Save directory is missing. Scan and preview again.')
+            expected = {key: value for key, value in before.items()
+                        if key != root and not key.startswith(root + '/')}
+            card.rmdir(root)
+            card.flush()
+            candidate = image.getvalue()
+        finally:
+            card.close()
+    with image_file(candidate, path) as image:
+        card = ps2mc(image)
+        try:
+            if not card.check() or tree_snapshot(card) != expected:
+                raise ValueError('Deletion verification failed; card is unchanged.')
+        finally:
+            card.close()
+    return CopyPlan(path, path, digest(original), digest(original), name, name,
+                    'Delete save', candidate, original)
+
+
 def plan_copy(source, record, destination, conflict='stop'):
     """Build and reopen a complete candidate in memory; no live-card writes."""
     if conflict not in ('stop', 'keep_both', 'replace'):
@@ -101,7 +152,13 @@ def plan_copy(source, record, destination, conflict='stop'):
             save = simple_save(card, record['save'])
             plugin = plugin_for(record['save'])
             # When a decoder exists, require its known checksum/layout checks.
-            if plugin:
+            if callable(getattr(plugin, 'validate_save', None)):
+                plugin.validate_save(record['save'], slot_data(plugin, record['save'], files(save)))
+            elif callable(getattr(plugin, 'payload_names', None)):
+                slots = plugin.slots(record['save'], slot_data(plugin, record['save'], files(save)))
+                if any(slot['state'] == 'invalid' for slot in slots):
+                    raise ValueError('Source validation failed: invalid save slots')
+            elif plugin:
                 decoded = plugin.decode(record['save'], files(save)[plugin.payload_name(record['save'])])
                 if not any(s.title == 'Progress' for s in decoded.sections):
                     raise ValueError('Source validation failed: ' + decoded.status)
@@ -127,16 +184,23 @@ def plan_copy(source, record, destination, conflict='stop'):
                 if conflict == 'stop':
                     raise ValueError('A different save already occupies this directory. Choose keep both (supported games) or replace explicitly.')
                 if conflict == 'keep_both':
-                    adapter = getattr(plugin, 'prepare_slot', None)
-                    if adapter is None:
-                        raise ValueError('Keeping both in different slots is not supported for this game.')
-                    occupied = {plugin.slot_number(n) for n in names if plugin.supports(n)}
-                    slot = next((n for n in range(1, 100) if n not in occupied), None)
-                    if slot is None:
-                        raise ValueError('No unused FFX slots remain.')
-                    save = adapter(save, slot)
-                    name = save.get_directory()[8].decode('ascii')
-                    action = f'Copy to unused slot {slot}'
+                    named_adapter = getattr(plugin, 'prepare_copy', None)
+                    if callable(named_adapter):
+                        save, action = named_adapter(save, names)
+                        name = save.get_directory()[8].decode('ascii')
+                        if name in names:
+                            raise ValueError('Renamed save would overwrite an existing directory.')
+                    else:
+                        adapter = getattr(plugin, 'prepare_slot', None)
+                        if adapter is None:
+                            raise ValueError('Keeping both in different slots is not supported for this game.')
+                        occupied = {plugin.slot_number(n) for n in names if plugin.supports(n)}
+                        slot = next((n for n in range(1, 100) if n not in occupied), None)
+                        if slot is None:
+                            raise ValueError('No unused FFX slots remain.')
+                        save = adapter(save, slot)
+                        name = save.get_directory()[8].decode('ascii')
+                        action = f'Copy to unused slot {slot}'
                 else:
                     action = 'Replace existing save'
                     card.rmdir('/' + name)
@@ -183,13 +247,12 @@ def plan_slot_copy(source, record, source_slot, destination, destination_slot, c
     original = source_data if source == destination else stable_read(destination)
     warnings = []
     name = record['save']
-    payload_name = plugin.payload_name(name)
     with image_file(source_data, source) as image:
         card = ps2mc(image)
         try:
             if not card.check(allow_lost_clusters=True, warnings=warnings):
                 raise ValueError('Source filesystem check failed.')
-            source_payload = files(simple_save(card, name)).get(payload_name, b'')
+            source_payload = slot_data(plugin, name, files(simple_save(card, name)))
         finally:
             card.close()
     with image_file(original, destination) as image:
@@ -200,9 +263,9 @@ def plan_slot_copy(source, record, source_slot, destination, destination_slot, c
             if not card.check():
                 raise ValueError('Destination filesystem check failed.')
             if name not in {entry[8].decode('ascii') for entry in entries(card, '/')}:
-                raise ValueError('Destination needs an existing Ar tonelico US save. Create one in-game first.')
+                raise ValueError(f'Destination needs an existing {plugin.name} save. Create one in-game first.')
             before = tree_snapshot(card)
-            old_payload = files(simple_save(card, name)).get(payload_name, b'')
+            old_payload = slot_data(plugin, name, files(simple_save(card, name)))
             candidate_payload = plugin.copy_slot(name, source_payload, source_slot, old_payload,
                                                  destination_slot, replace=conflict == 'replace')
             if candidate_payload == old_payload:
@@ -211,13 +274,22 @@ def plan_slot_copy(source, record, source_slot, destination, destination_slot, c
             occupied = plugin.slots(name, old_payload)[destination_slot - 1]['state'] == 'occupied'
             action = (f'Replace slot {destination_slot} with slot {source_slot}' if occupied else
                       f'Copy slot {source_slot} to slot {destination_slot}')
-            handle = card.open('/' + name + '/' + payload_name, 'r+b')
-            try:
-                # Fixed-size overwrite retains allocation and container dates.
-                # Slot observations use game state hashes, independent of dates.
-                handle.write(candidate_payload, _set_modified=False)
-            finally:
-                handle.close()
+            candidate_files = (candidate_payload if isinstance(candidate_payload, dict) else
+                               {plugin.payload_name(name): candidate_payload})
+            original_files = old_payload if isinstance(old_payload, dict) else {plugin.payload_name(name): old_payload}
+            if candidate_files.keys() != original_files.keys():
+                raise ValueError('Candidate changed the slot file set.')
+            for filename, payload in candidate_files.items():
+                if not isinstance(payload, bytes) or len(payload) != len(original_files[filename]):
+                    raise ValueError('Candidate changed a slot file size.')
+                if payload == original_files[filename]:
+                    continue
+                handle = card.open('/' + name + '/' + filename, 'r+b')
+                try:
+                    # Fixed-size overwrites retain allocation and container dates.
+                    handle.write(payload, _set_modified=False)
+                finally:
+                    handle.close()
             if not card.check():
                 raise ValueError('Candidate filesystem check failed.')
         finally:
@@ -229,13 +301,14 @@ def plan_slot_copy(source, record, source_slot, destination, destination_slot, c
         card = ps2mc(image)
         try:
             after = tree_snapshot(card)
-            payload_path = '/' + name + '/' + payload_name
-            if before.keys() != after.keys() or any(before[path] != after[path] for path in before if path != payload_path):
-                raise ValueError('Candidate changed another file or its metadata.')
-            if after[payload_path][1] != candidate_payload or not card.check():
-                raise ValueError('Reopened candidate does not match the planned slot.')
-            # Recheck all slot identities/checksums in the reopened payload.
-            if any(slot['state'] == 'invalid' for slot in plugin.slots(name, after[payload_path][1])):
+            expected = dict(before)
+            for filename, payload in candidate_files.items():
+                path = '/' + name + '/' + filename
+                expected[path] = (before[path][0], payload)
+            if after != expected or not card.check():
+                raise ValueError('Candidate changed another file, metadata, or planned slot data.')
+            reopened = slot_data(plugin, name, files(simple_save(card, name)))
+            if any(slot['state'] == 'invalid' for slot in plugin.slots(name, reopened)):
                 raise ValueError('Reopened candidate contains an invalid slot.')
         finally:
             card.close()
@@ -273,7 +346,10 @@ def apply_copy(plan, backup_root=DEFAULT_BACKUPS):
     temporary = None
     replaced = False
     try:
-        fd, temporary = tempfile.mkstemp(prefix='.' + plan.destination.name + '-copy-', dir=plan.destination.parent)
+        # Some WebDAV servers hide dotfiles from directory refreshes. davfs2
+        # can then lose a hidden staging file before rename. Keep it visible,
+        # with a .tmp suffix so inventory scans don't treat it as a card.
+        fd, temporary = tempfile.mkstemp(prefix=plan.destination.name + '-copy-', suffix='.tmp', dir=plan.destination.parent)
         with os.fdopen(fd, 'wb') as handle:
             os.fchmod(handle.fileno(), stat.S_IMODE(plan.destination.stat().st_mode))
             handle.write(plan.candidate)
@@ -289,7 +365,7 @@ def apply_copy(plan, backup_root=DEFAULT_BACKUPS):
             raise ValueError('Destination read-back differs from the candidate.')
     except Exception as error:
         state = 'Destination may have changed' if replaced else 'Destination was not replaced'
-        raise RuntimeError(f'{error}\n{state}. Original backup: {backup_file}') from error
+        raise CopyApplyError(f'{error}\n{state}. Original backup: {backup_file}', backup_file) from error
     finally:
         if temporary is not None and Path(temporary).exists():
             Path(temporary).unlink()

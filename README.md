@@ -38,6 +38,14 @@ port. See [web setup](docs/WEB.md) for mounts, permissions and authentication.
 - Reviewed whole-save copying with conflict detection and atomic replacement.
 - Ar tonelico US: all 12 slots, copying into empty or explicitly replaced slots,
   including on the same card; user-confirmed on real hardware through OPL.
+- .hack//Infection US: browse 12 slots with playtime and copy individual slots
+  between existing saves, preserving the other slots and shared index entries.
+- Katamari Damacy US: browse three slots and copy one between existing saves
+  while retaining the destination options.
+- Steambot Chronicles US: browse 12 slots with playtime, and copy verified
+  slots from incomplete saves into complete destination saves.
+- THPS4 US careers: keep conflicting versions as separately named careers
+  (for example, Larry and Larry 2), preserving their game-state data.
 - FFX International/Undub: keep both copies using an unused native slot;
   the transformation has a user-confirmed physical-PS2 case.
 - Activity history and original-card backups. Polling only scans.

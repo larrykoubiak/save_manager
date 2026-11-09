@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from .compare_saves import date_text, entries
-from game_plugins import Breakdown, Section, plugin_for
+from game_plugins import Breakdown, Section, plugin_for, slot_data
 from vendor.mymcplusplus.mymcplusplus.ps2mc import ps2mc
 from vendor.mymcplusplus.mymcplusplus.ps2mc_dir import mode_is_file
 
@@ -20,7 +20,21 @@ def inspect_save(card_path, record, side):
                 (entry[8].decode('ascii'), f'{entry[2]:,} bytes' if mode_is_file(entry[0]) else 'Directory')
                 for entry in contents))
             plugin = plugin_for(record['save'])
-            if plugin:
+            if callable(getattr(plugin, 'payload_names', None)):
+                data = {}
+                for name in plugin.payload_names(record['save']):
+                    if not any(entry[8] == name.encode('ascii') and mode_is_file(entry[0]) for entry in contents):
+                        continue
+                    payload = card.open(directory + '/' + name, 'rb')
+                    try:
+                        data[name] = payload.read()
+                    finally:
+                        payload.close()
+                slots = plugin.slots(record['save'], slot_data(plugin, record['save'], data))
+                decoded = Breakdown('Save slots', (Section('Slots', tuple(
+                    (f"Slot {slot['number']}", slot['label'] or slot['error'] or slot['state'])
+                    for slot in slots)),), ())
+            elif plugin:
                 name = plugin.payload_name(record['save'])
                 entry = next((e for e in contents if e[8] == name.encode('ascii') and mode_is_file(e[0])), None)
                 if entry is None:
