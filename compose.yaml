@@ -14,5 +14,20 @@ services:
     restart: unless-stopped
     init: true
 
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: [cloudflare]
+    command: [tunnel, --no-autoupdate, --metrics, "0.0.0.0:2000", run]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      save-manager:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+
 volumes:
   save-manager-data:

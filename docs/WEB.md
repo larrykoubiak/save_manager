@@ -64,6 +64,32 @@ Keep network storage mounted on the host. This container does not discover,
 mount, or wake consoles. Plugging a handheld into another computer does not
 make it visible here automatically.
 
+## Remote access through Cloudflare Tunnel
+
+The optional `cloudflared` service shares the app's Docker network and starts
+once the app is healthy. Create a remotely managed tunnel in the
+[Cloudflare dashboard](https://developers.cloudflare.com/tunnel/get-started/).
+Put its connector token in the ignored local `.env`, together with an app
+password (or configure Cloudflare Access for the hostname):
+
+```dotenv
+CLOUDFLARE_TUNNEL_TOKEN=your-tunnel-token
+SAVE_MANAGER_TOKEN=your-private-app-password
+COMPOSE_PROFILES=cloudflare
+```
+
+In the tunnel's published application route, point your chosen HTTPS hostname
+to **HTTP `save-manager:8080`**. Leave the origin Host header unchanged so the
+app's same-origin checks work. Then run `docker compose up -d cloudflared`
+(or `docker compose up --build -d` to update the whole stack). A changed app
+password requires recreating the app with `docker compose up -d save-manager`.
+The password prompt accepts any username and `SAVE_MANAGER_TOKEN` as password.
+
+The connector publishes no host ports and mounts no cards or inventory data.
+Without the `cloudflare` profile, the stack continues to run locally.
+`.env.example` lists these settings without credentials. Tunnel configuration
+and hostname routing are managed in your Cloudflare account.
+
 ## Workflow
 
 1. **Add device**: choose a name, device type, and manual scans or a polling

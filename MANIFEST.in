@@ -1,5 +1,5 @@
 include README.md CHANGELOG.md THIRD_PARTY.md LICENSE
-include Dockerfile compose.yaml compose.override.yaml.example .dockerignore
+include Dockerfile compose.yaml compose.override.yaml.example .dockerignore .env.example
 include .gitmodules vendor/README.md
 recursive-include save_web *.py *.html *.css *.js
 recursive-include save_core *.py

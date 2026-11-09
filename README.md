@@ -28,7 +28,9 @@ docker compose up --build -d
 ```
 
 Open <http://127.0.0.1:8081>. Set `SAVE_MANAGER_PORT` to choose another host
-port. See [web setup](docs/WEB.md) for mounts, permissions and authentication.
+port. An optional `cloudflared` service provides remote access through your
+Cloudflare Tunnel. See [web setup](docs/WEB.md) for mounts, authentication
+and tunnel configuration.
 
 ## Features
 
