@@ -59,6 +59,22 @@ CREATE TABLE IF NOT EXISTS transfers (
     action TEXT NOT NULL, status TEXT NOT NULL, created TEXT NOT NULL,
     finished TEXT, backup TEXT, error TEXT, source_slot INTEGER, destination_slot INTEGER
 );
+CREATE TABLE IF NOT EXISTS sync_groups (
+    id INTEGER PRIMARY KEY, directory TEXT NOT NULL UNIQUE,
+    enabled INTEGER NOT NULL DEFAULT 1, head_hash TEXT, source_card_id INTEGER REFERENCES cards(id),
+    snapshot TEXT, status TEXT NOT NULL DEFAULT 'settling', message TEXT NOT NULL DEFAULT '',
+    next_scan REAL NOT NULL DEFAULT 0, updated TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sync_members (
+    group_id INTEGER NOT NULL REFERENCES sync_groups(id), card_id INTEGER NOT NULL REFERENCES cards(id),
+    baseline_hash TEXT, status TEXT NOT NULL DEFAULT 'waiting', message TEXT NOT NULL DEFAULT '',
+    retry_after REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY(group_id,card_id)
+);
+CREATE TABLE IF NOT EXISTS sync_observations (
+    card_id INTEGER PRIMARY KEY REFERENCES cards(id), sha256 TEXT NOT NULL,
+    since REAL NOT NULL, checked REAL NOT NULL, checks INTEGER NOT NULL
+);
 """
 
 
@@ -68,7 +84,7 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 5:
+            if version > 6:
                 raise ValueError('This database requires a newer Save Manager.')
             db.execute('PRAGMA journal_mode=WAL')
             db.executescript(SCHEMA)
@@ -84,7 +100,7 @@ class Database:
                     db.execute(f"ALTER TABLE saves ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
             if 'size_blocks' not in save_columns:
                 db.execute('ALTER TABLE saves ADD COLUMN size_blocks INTEGER')
-            db.execute('PRAGMA user_version=5')
+            db.execute('PRAGMA user_version=6')
 
     @contextmanager
     def connect(self):

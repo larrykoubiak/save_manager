@@ -50,10 +50,12 @@ and tunnel configuration.
   (for example, Larry and Larry 2), preserving their game-state data.
 - FFX International/Undub: keep both copies using an unused native slot;
   the transformation has a user-confirmed physical-PS2 case.
-- Activity history and original-card backups. Polling only scans.
+- Activity history and original-card backups.
+- Opt-in automatic sync per save across selected cards, with stable scans,
+  offline queues, conflict selection, and full card backups before writes.
 
-PS1 formats, native device connectors and automatic bidirectional sync are
-future work. Game plugins focus on save slots and safe copying; optional
+PS1 formats and native device connectors are future work.
+Game plugins focus on save slots and safe copying; optional
 inspection/merge helpers remain in the shared backend.
 
 Close games/emulators using either card before applying a transfer. Backups

@@ -38,6 +38,8 @@ class Service:
         self.wake = threading.Event()
         self.thread = None
         self.previews = {}
+        from .sync import Sync
+        self.sync = Sync(self)
         with self.db.connect() as db:
             db.execute("UPDATE jobs SET status='interrupted', finished=?, error='Server restarted; scan again.' WHERE status IN ('queued','running')", (now(),))
             db.execute("UPDATE transfers SET status='expired', finished=?, error='Server restarted; preview again.' WHERE status='preview'", (now(),))
@@ -114,6 +116,8 @@ class Service:
                             JOIN cards c ON c.id=s.card_id WHERE s.present=1 AND c.present=1
                             ORDER BY p.save_id,p.number''',
                 'transfers': 'SELECT * FROM transfers ORDER BY created DESC LIMIT 50',
+                'sync_groups': 'SELECT * FROM sync_groups ORDER BY directory',
+                'sync_members': 'SELECT * FROM sync_members ORDER BY group_id,card_id',
             }.items()}
         return result
 
@@ -145,6 +149,13 @@ class Service:
                            (location_id, card['filename'], card['sha256'], card['size'], card['mtime_ns'], card['formatted'],
                             card['total_blocks'], card['free_blocks'], timestamp))
                 card_id = db.execute('SELECT id FROM cards WHERE location_id=? AND filename=?', (location_id, card['filename'])).fetchone()[0]
+                observed = time.time()
+                db.execute('''INSERT INTO sync_observations(card_id,sha256,since,checked,checks) VALUES (?,?,?,?,1)
+                              ON CONFLICT(card_id) DO UPDATE SET
+                              since=CASE WHEN sha256=excluded.sha256 THEN since ELSE excluded.since END,
+                              checks=CASE WHEN sha256=excluded.sha256 THEN checks+1 ELSE 1 END,
+                              sha256=excluded.sha256,checked=excluded.checked''',
+                           (card_id,card['sha256'],observed,observed))
                 for save in card['saves']:
                     updated = save['updated'].isoformat(sep=' ') if save['updated'] else None
                     model = save.get('icon_model')
@@ -213,10 +224,13 @@ class Service:
                 with self.lock:
                     self._expire_previews()
                 self.enqueue_due()
+                self.sync.enqueue_due()
                 jobs = self.db.rows("SELECT id FROM jobs WHERE status='queued' ORDER BY id LIMIT 1")
                 if jobs:
                     self.run_scan(jobs[0]['id'])
+                    self.sync.tick()
                     continue
+                self.sync.tick()
             except Exception:
                 logging.exception('Background scan failed')
                 if jobs:

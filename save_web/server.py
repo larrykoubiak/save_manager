@@ -110,6 +110,15 @@ class Application:
                 return response(202, self.service.queue_scan(device_id))
         if path == '/api/transfers/preview' and method == 'POST':
             return response(201, self.service.preview(body))
+        if path == '/api/sync/groups' and method == 'POST':
+            return response(201, self.service.sync.configure(body))
+        if len(parts) >= 4 and parts[:3] == ['api', 'sync', 'groups']:
+            if len(parts) == 4 and method == 'PUT':
+                return response(200, self.service.sync.set_enabled(int(parts[3]), body))
+            if len(parts) == 5 and parts[4] == 'resolve' and method == 'POST':
+                return response(200, self.service.sync.resolve(int(parts[3]), body))
+            if len(parts) == 5 and parts[4] == 'retry' and method == 'POST':
+                return response(200, self.service.sync.retry(int(parts[3])))
         if len(parts) == 4 and parts[:2] == ['api', 'transfers']:
             if parts[3] == 'apply' and method == 'POST':
                 return response(200, self.service.apply(parts[2], body))

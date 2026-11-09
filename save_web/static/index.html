@@ -12,6 +12,7 @@
       <button class="nav active" data-view="library">Browser</button>
       <button class="nav" data-view="devices">Devices <span id="device-count" class="count">0</span></button>
       <button class="nav" data-view="activity">Activity</button>
+      <button class="nav" data-view="sync">Sync</button>
     </nav>
     <button id="add-device" class="primary">Add device</button>
   </div>
@@ -27,23 +28,26 @@
       <div id="library"></div>
     </section>
     <section id="activity-view" hidden><div class="section-heading"><h2>Recent activity</h2><span>Scans and reviewed transfers</span></div><div id="activity"></div></section>
+    <section id="sync-view" hidden><p class="hint">Enabled saves are checked every minute. Changes must settle across two scans before syncing. Offline devices keep pending updates. Every write backs up the destination card; deletions stay local.</p><div id="sync-groups"></div></section>
   </main>
   <dialog id="manage-dialog" class="wide"><div class="dialog-heading"><h2 id="manage-title">Device</h2><button class="icon-button" data-close aria-label="Close">×</button></div><div id="manage-content"></div></dialog>
   <dialog id="device-dialog"><form id="device-form"><div class="dialog-heading"><h2 id="device-form-title">Add a device</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></div>
     <label>Device name<input name="name" required maxlength="200" placeholder="Living room PS2"></label>
     <label>Device type<select name="kind"><option>This machine</option><option>PS2</option><option>Pi 5</option><option>RetroPie</option><option>PS Vita</option><option>PSP</option><option>PS3</option><option>Other</option></select></label>
     <label>Scan schedule<select name="poll_seconds"><option value="0">Manual only</option><option value="60">Every minute</option><option value="300">Every 5 minutes</option><option value="900">Every 15 minutes</option><option value="3600">Every hour</option><option value="86400">Every day</option></select></label>
-    <p class="hint">Scheduled scans update the inventory. They never copy or delete saves.</p><p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Save device</button></div>
+    <p class="hint">Scheduled scans update the inventory. Saves explicitly enabled for automatic sync also monitor their selected devices every minute.</p><p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Save device</button></div>
   </form></dialog>
   <dialog id="location-dialog"><form id="location-form"><div class="dialog-heading"><h2 id="location-form-title">Add a location</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></div>
     <label>Location name<input name="name" required maxlength="200" placeholder="Memory cards"></label>
     <label>Folder path<input name="path" required placeholder="/cards/ps2" maxlength="4096"></label><p class="hint">Use the path visible to the server. In Docker, mount the folder first. Folders are scanned directly, without subfolders.</p>
     <label>Card format<select name="suffix"><option value=".ps2">PS2 · .ps2 images</option><option value=".bin">PS2 · .bin VMC images</option></select></label>
     <label>Availability marker <span class="optional">(optional)</span><input name="marker" maxlength="200" placeholder=".save-manager-online"></label><p class="hint">An existing file on the mounted device. If missing, the location is treated as offline, even if its empty mount folder remains.</p>
-    <label class="checkbox"><input type="checkbox" name="writable"> Allow writes into this location (transfers and deletion)</label>
+    <label class="checkbox"><input type="checkbox" name="writable"> Allow writes into this location (transfers, deletion, and enabled sync groups)</label>
     <p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Save location</button></div>
   </form></dialog>
   <dialog id="cards-dialog" class="wide"><div class="dialog-heading"><h2 id="cards-title">Memory cards</h2><button class="icon-button" data-close aria-label="Close">×</button></div><div id="cards-content"></div></dialog>
+  <dialog id="sync-dialog"><form id="sync-form"><div class="dialog-heading"><h2>Automatic sync</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></div><p id="sync-save"></p><p class="hint">Choose at least two cards. A save changed on one card will update the others after it settles. Different starting copies and independent changes require choosing a source. This assumes you play on one device at a time.</p><div id="sync-card-choices"></div><p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Enable sync</button></div></form></dialog>
+  <dialog id="sync-source-dialog"><form id="sync-source-form"><div class="dialog-heading"><h2>Choose the copy to sync</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></div><p id="sync-source-summary"></p><p class="hint">This copy will replace this save on the other selected cards, including every internal slot. Their current cards will be backed up first. Offline copies will update when they return, unless they have changed independently.</p><p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Use this copy</button></div></form></dialog>
   <dialog id="transfer-dialog"><form id="transfer-form"><div class="dialog-heading"><h2>Transfer a save</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></div>
     <div id="transfer-source" class="source-summary"></div>
     <div id="transfer-options"><label>Destination card<select name="destination_card_id" required></select></label>

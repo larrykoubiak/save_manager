@@ -162,6 +162,31 @@ class WebTest(unittest.TestCase):
         self.service.enqueue_due(at=10**12)
         self.assertEqual(len(self.service.inventory()['jobs']), 1)
 
+    def test_sync_configuration_pause_and_source_selection_http(self):
+        import time
+        save, target = self.cards()
+        body = {'directory':save['directory'], 'card_ids':[save['card_id'],target['id']]}
+        self.assertEqual(self.request('/api/sync/groups',body,'POST')[0],400)
+        self.service.save_location(self.pc['id'],{'writable':True},self.pc_location['id'])
+        status, group, _ = self.request('/api/sync/groups',body,'POST')
+        self.assertEqual(status,201,group)
+        self.assertEqual(len(self.service.inventory()['sync_members']),2)
+        endpoint = f"/api/sync/groups/{group['id']}"
+        status, paused, _ = self.request(endpoint,{'enabled':False},'PUT')
+        self.assertEqual(status,200)
+        self.assertFalse(paused['enabled'])
+        self.assertEqual(self.request(endpoint,{'enabled':'false'},'PUT')[0],400)
+        source = {'source_card_id':save['card_id']}
+        self.assertEqual(self.request(endpoint+'/resolve',source,'POST')[0],400)
+        with self.service.db.connect() as db:
+            db.execute('UPDATE sync_observations SET checks=2,since=?,checked=?',(time.time()-60,time.time()))
+        status, result, _ = self.request(endpoint+'/resolve',source,'POST')
+        self.assertEqual(status,200,result)
+        self.assertTrue(Path(result['snapshot']).exists())
+        status, result, _ = self.request(endpoint+'/retry',{},'POST')
+        self.assertEqual(status,200,result)
+        self.assertEqual(self.request('/api/sync/groups',{**body,'card_ids':[target['id']]},'POST')[0],400)
+
     def test_reviewed_deletion_backup_cancel_and_rescan(self):
         save, target = self.cards()
         original = (self.source / 'source.ps2').read_bytes()

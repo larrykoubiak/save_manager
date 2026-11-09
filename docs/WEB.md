@@ -128,10 +128,16 @@ and hostname routing are managed in your Cloudflare account.
    in the preview, and apply. The app validates the images again, creates a
    verified backup, replaces the destination atomically, and queues a rescan.
 
-Polling **never writes cards or propagates deletions**. Transfers are
-individual reviewed save copies, rather than bidirectional synchronization.
-Remote games cannot be locked by this app; polling should also be avoided
-while games actively write the cards if you want coherent snapshots.
+Use **Sync…** beside a save to opt into automatic sync across selected cards.
+Enabled groups scan their devices every minute, require two unchanged scans
+and at least 30 seconds of settling, then copy the changed save with a full
+destination-card backup. The Sync tab shows pending, blocked and conflict states.
+Different initial copies require choosing a source. Independently changed
+copies stop automatic writes until you choose one. Offline targets catch up
+from a persistent source snapshot when they return. Deletions are never
+propagated, and removed tracked saves are not silently recreated.
+This mode assumes one active gaming device at a time; it does not inspect
+emulator processes. Pause a group to suspend its automatic writes.
 
 A failed location scan retains that location's complete previous inventory.
 Other reachable locations can still update, giving the device a partial
@@ -222,6 +228,10 @@ HTTP Basic authentication applies when `SAVE_MANAGER_TOKEN` is configured.
 | POST | `/api/transfers/preview` | `save_id`, `destination_card_id`, optional `conflict`: `stop`, `keep_both`, `replace`; internal slot copy additionally requires `source_slot`, `destination_slot` (1–12), supports only `stop`/`replace`; 201 preview |
 | POST | `/api/transfers/{id}/apply` | `cards_idle: true`; 200 completed transfer with backup path or null for identical content |
 | POST | `/api/transfers/{id}/cancel` | `{}`; cancel an unused preview |
+| POST | `/api/sync/groups` | `directory`, `card_ids` (2–32 writable cards); configure or replace a sync group |
+| PUT | `/api/sync/groups/{id}` | `enabled`: pause/resume a configured group |
+| POST | `/api/sync/groups/{id}/resolve` | `source_card_id`: explicitly select a stable source copy |
+| POST | `/api/sync/groups/{id}/retry` | `{}`; scan now and retry blocked updates |
 
 Failures return `{ "error": "explanation" }`: 400 invalid input, conflict or
 expired/stale preview; 401 authentication; 403 origin/header rejection;
@@ -231,8 +241,8 @@ the scan has succeeded. A transfer that fails after preview records its
 error in transfer history. IDs are server-owned: requests cannot supply
 arbitrary source or destination filenames for transfers.
 
-Schema version 5 uses `PRAGMA user_version`; older inventories migrate
-automatically, including per-copy progress labels and save sizes.
+Schema version 6 uses `PRAGMA user_version`; older inventories migrate
+automatically, including sync groups, per-card baselines and stable observations.
 Existing inventory/history is retained. A newer database is rejected.
 SQLite has foreign keys, WAL journaling, per-request connections, atomic
 location inventory commits, and a unique active scan per device.
@@ -241,8 +251,7 @@ location inventory commits, and a unique active scan per device.
 
 This version supports mounted **PS2 .ps2 / .bin** cards, including raw/ECC
 handling already implemented in the reader. PS1 card backends, native
-PSP/Vita/PS3 save formats, device agents/connectors, automatic transfer
-policies, and a three-way synchronization baseline are future work. A PS3
+PSP/Vita/PS3 save formats and device agents/connectors are future work. A PS3
 device can be registered now if its PS2 images are available through a mount.
 
 ## Verification

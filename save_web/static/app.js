@@ -2,7 +2,7 @@
 
 const $ = selector => document.querySelector(selector);
 const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let data = {devices:[],locations:[],cards:[],saves:[],slots:[],jobs:[],transfers:[]};
+let data = {devices:[],locations:[],cards:[],saves:[],slots:[],jobs:[],transfers:[],sync_groups:[],sync_members:[]};
 let selectedDevice = null, selectedSave = null, preview = null, transferBusy = false, managedDevice = null;
 let renderedLibrary = '';
 let selectedSourceSlot = null;
@@ -39,10 +39,10 @@ function renderSlots(save) {
   return `<div class="slot-list"><strong>Save slots · ${slots.filter(slot => slot.state === 'occupied').length} / ${slots.length}</strong>${occupied.map(slot => `<div class="slot-entry"><div>Slot ${slot.number}<small>${h(slot.label || slot.state)}${slot.error?'<br>'+h(slot.error):''}</small><code title="Matching content has the same identifier across slot numbers">${h(slot.sha256?.slice(0,8) || '')}</code></div><button data-action="slot-copy" data-id="${save.id}" data-slot="${slot.number}" ${canTransfer(save) && slot.state==='occupied'?'':'disabled'} aria-label="Copy slot ${slot.number} from ${h(data.cards.find(c=>c.id===save.card_id)?.filename)}">Copy…</button></div>`).join('') || '<small>No occupied slots</small>'}<small class="empty-slots">Empty: ${empty.map(slot => slot.number).join(', ') || 'None'}</small></div>`;
 }
 function switchView(view) {
-  for (const name of ['devices','library','activity']) $(`#${name}-view`).hidden = name !== view;
+  for (const name of ['devices','library','activity','sync']) $(`#${name}-view`).hidden = name !== view;
   document.querySelectorAll('.nav').forEach(button => button.classList.toggle('active', button.dataset.view === view));
-  $('#page-title').textContent = {devices:'Devices',library:'Memory Card Browser',activity:'Activity'}[view];
-  $('#page-description').textContent = {devices:'Locations, availability and scan schedules.',library:'One row per save, one column per device.',activity:'Scans, transfers and backups.'}[view];
+  $('#page-title').textContent = {devices:'Devices',library:'Memory Card Browser',activity:'Activity',sync:'Automatic sync'}[view];
+  $('#page-description').textContent = {devices:'Locations, availability and scan schedules.',library:'One row per save, one column per device.',activity:'Scans, transfers and backups.',sync:'Selected saves, queued updates and conflicts.'}[view];
 }
 function deviceHeader(device) {
   const locations = data.locations.filter(l => l.device_id === device.id);
@@ -66,12 +66,12 @@ function render() {
     ['Locations', d => locationList(d.id)],
   ];
   $('#devices').innerHTML = data.devices.length ? `<div class="table-wrap matrix-wrap" tabindex="0" role="region" aria-label="Device details"><table class="matrix device-table"><caption class="sr-only">Device configuration and inventory</caption><thead><tr><th scope="col">Device</th>${data.devices.map(deviceHeader).join('')}</tr></thead><tbody>${rows.map(([label,value]) => `<tr><th scope="row">${label}</th>${data.devices.map(d => `<td>${value(d)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : noDevices();
-  renderLibrary(); renderActivity();
+  renderLibrary(); renderActivity(); renderSync();
   if ($('#cards-dialog').open) renderCards();
   if ($('#manage-dialog').open) renderManage();
 }
 function locationList(deviceId) {
-  return data.locations.filter(l => l.device_id === deviceId).map(l => `<div class="location"><div><strong>${h(l.name)}</strong> ${badge(l.status)}<div class="path">${h(l.path)} · ${h(l.suffix)} · ${l.writable?'Transfers enabled':'Read-only'}</div>${l.error?`<div class="error-text">${h(l.error)}</div>`:''}</div><button data-action="edit-location" data-id="${l.id}">Edit</button></div>`).join('') || '<span class="muted">No locations configured</span>';
+  return data.locations.filter(l => l.device_id === deviceId).map(l => `<div class="location"><div><strong>${h(l.name)}</strong> ${badge(l.status)}<div class="path">${h(l.path)} · ${h(l.suffix)} · ${l.writable?'Writes enabled':'Read-only'}</div>${l.error?`<div class="error-text">${h(l.error)}</div>`:''}</div><button data-action="edit-location" data-id="${l.id}">Edit</button></div>`).join('') || '<span class="muted">No locations configured</span>';
 }
 function renderManage() {
   const device = data.devices.find(d => d.id === managedDevice);
@@ -110,7 +110,7 @@ function renderLibrary() {
   const html = `<table class="matrix comparison"><caption class="sr-only">Save copies by device</caption><thead><tr><th scope="col" aria-sort="${librarySort === 'name-asc' ? 'ascending' : librarySort === 'name-desc' ? 'descending' : 'none'}"><button class="sort-heading" data-action="sort-name" title="Sort by save name A–Z or Z–A">Save ${librarySort === 'name-asc' ? '↑' : librarySort === 'name-desc' ? '↓' : '↕'}</button></th><th scope="col" class="size-column" aria-sort="${librarySort === 'size-desc' ? 'descending' : librarySort === 'size-asc' ? 'ascending' : 'none'}"><button class="sort-heading" data-action="sort-size" title="Card space including icons and directory overhead. Ranges show different copies; sorting uses the largest copy.">Size ${librarySort === 'size-desc' ? '↓' : librarySort === 'size-asc' ? '↑' : '↕'}</button></th>${data.devices.map(deviceHeader).join('')}</tr></thead><tbody>${rows.map(([directory,saves]) => {
     const different = new Set(saves.map(s => s.sha256)).size > 1;
     const icon = saves.find(s => s.icon_hash)?.icon_hash || 'placeholder';
-    return `<tr data-save="${h(directory)}"><th scope="row"><div class="save-label"><img class="save-icon" src="/api/icons/${h(icon)}.gif${animation}" alt="" width="64" height="64" loading="lazy"><div><strong>${h(rowTitle(directory, saves))}</strong><small class="directory">${h(directory)}</small>${badge(different?'partial':saves.length>1?'online':'never', different?'Different copies':saves.length>1?'Matching copies':'Single copy')}</div></div></th><td class="save-size" data-size="${rowSize(saves) ?? ''}" title="Memory-card space including icons and directory overhead; range across copies">${h(sizeRange(saves))}</td>${data.devices.map(device => {
+    return `<tr data-save="${h(directory)}"><th scope="row"><div class="save-label"><img class="save-icon" src="/api/icons/${h(icon)}.gif${animation}" alt="" width="64" height="64" loading="lazy"><div><strong>${h(rowTitle(directory, saves))}</strong><small class="directory">${h(directory)}</small>${badge(different?'partial':saves.length>1?'online':'never', different?'Different copies':saves.length>1?'Matching copies':'Single copy')}<div class="table-actions"><button data-action="configure-sync" data-id="${saves[0].id}">${syncLabel(directory)}</button></div></div></div></th><td class="save-size" data-size="${rowSize(saves) ?? ''}" title="Memory-card space including icons and directory overhead; range across copies">${h(sizeRange(saves))}</td>${data.devices.map(device => {
       const copies = saves.filter(s => deviceOf(data.cards.find(c => c.id === s.card_id))?.id === device.id);
       if (!copies.length) {
         const uncertain = device.status !== 'online';
@@ -145,6 +145,39 @@ function renderCards() {
     return `<article><div class="save-heading"><h3>${h(c.filename)}</h3>${badge(c.present?location.status:'offline',c.present?undefined:'Missing at last scan')}</div><p class="hint">${h(location.name)} · ${c.formatted?`${c.free_blocks.toLocaleString()} / ${c.total_blocks.toLocaleString()} KiB free`:'Unformatted card'} · Last seen ${h(when(c.last_seen))}</p>${c.formatted?`<progress max="${c.total_blocks}" value="${c.total_blocks-c.free_blocks}" aria-label="Card capacity used"></progress>`:''}
       <div class="table-wrap"><table><thead><tr><th>Save</th><th>Directory</th><th></th></tr></thead><tbody>${saves.map(s => `<tr><td>${h(s.title || s.directory)}</td><td>${h(s.directory)}</td><td><div class="table-actions"><button data-action="transfer" data-id="${s.id}" ${canTransfer(s)?'':'disabled'}>Transfer…</button><button class="danger" data-action="delete-save" data-id="${s.id}" ${canDelete(s)?'':'disabled'}>Delete…</button></div></td></tr>`).join('') || '<tr><td colspan="3">No saves in the last known inventory.</td></tr>'}</tbody></table></div></article>`;
   }).join('') || '<div class="empty">No cards discovered yet. Add a location and scan this device.</div>';
+}
+function syncLabel(directory) {
+  const group = data.sync_groups.find(g => g.directory === directory);
+  return !group ? 'Sync…' : !group.enabled ? 'Sync · paused' : `Sync · ${group.status}`;
+}
+function renderSync() {
+  $('#sync-groups').innerHTML = data.sync_groups.map(group => {
+    const saves = data.saves.filter(s => s.directory === group.directory);
+    const members = data.sync_members.filter(m => m.group_id === group.id);
+    return `<article class="sync-group"><div class="save-heading"><h2>${h(rowTitle(group.directory,saves))}</h2>${badge(group.enabled?group.status:'paused')}</div><code>${h(group.directory)}</code><p>${h(group.message || 'Waiting for stable scans.')}</p><div class="table-actions"><button data-action="configure-sync" data-id="${saves[0]?.id}">Choose cards…</button><button data-action="toggle-sync" data-id="${group.id}">${group.enabled?'Pause sync':'Resume sync'}</button><button data-action="retry-sync" data-id="${group.id}">Scan / retry now</button></div><div class="table-wrap"><table><thead><tr><th>Copy</th><th>Status</th><th></th></tr></thead><tbody>${members.map(member => {
+      const card = data.cards.find(c => c.id === member.card_id);
+      const save = saves.find(s => s.card_id === card.id && s.present);
+      return `<tr><td>${h(cardLabel(card))}${save?`<small>${h(save.summary || save.title || '')}</small>`:''}</td><td>${badge(member.status)}<small>${h(member.message)}</small></td><td><button data-action="sync-source" data-id="${group.id}" data-card="${card.id}" ${save && canTransfer(save)?'':'disabled'}>Use this copy…</button></td></tr>`;
+    }).join('')}</tbody></table></div></article>`;
+  }).join('') || '<p class="empty">No saves enabled for automatic sync. Use Sync… beside a save in the Browser to choose its cards.</p>';
+}
+function openSync(saveId) {
+  const save = data.saves.find(s => s.id === saveId);
+  if (!save) throw new Error('Save is no longer available. Refresh and try again.');
+  const form = $('#sync-form'); form.reset(); form.dataset.directory = save.directory;
+  form.querySelector('.form-error').textContent = '';
+  const group = data.sync_groups.find(g => g.directory === save.directory);
+  const chosen = group ? data.sync_members.filter(m => m.group_id === group.id).map(m => m.card_id) : currentSaves().filter(s => s.directory === save.directory).map(s => s.card_id);
+  $('#sync-save').textContent = `${save.row_title || save.title || save.directory} · ${save.directory}`;
+  $('#sync-card-choices').innerHTML = data.cards.filter(c => (c.present && c.formatted && locationOf(c)?.writable && locationOf(c)?.status === 'online') || chosen.includes(c.id)).map(card => `<label class="checkbox"><input type="checkbox" name="card_id" value="${card.id}" ${chosen.includes(card.id)?'checked':''}> ${h(cardLabel(card))}${locationOf(card)?.status !== 'online'?' · offline':''}</label>`).join('');
+  $('#sync-dialog').showModal();
+}
+function openSyncSource(key,cardId) {
+  const group = data.sync_groups.find(g => g.id === key), card = data.cards.find(c => c.id === cardId);
+  const form = $('#sync-source-form'); form.dataset.group = key; form.dataset.card = cardId;
+  form.querySelector('.form-error').textContent = '';
+  $('#sync-source-summary').textContent = `${group.directory} · ${cardLabel(card)}`;
+  $('#sync-source-dialog').showModal();
 }
 function renderActivity() {
   const events = [...data.jobs.map(j => ({...j, type:'scan', label:`${j.reason === 'poll'?'Scheduled':'Device'} scan`, detail:data.devices.find(d => d.id === j.device_id)?.name})),
@@ -247,6 +280,22 @@ $('#location-form').addEventListener('submit', event => {
     $('#location-dialog').close(); await refresh(); notice('Location saved. Scan the device to discover its cards.');
   });
 });
+$('#sync-form').addEventListener('submit', event => {
+  event.preventDefault(); const form = event.currentTarget;
+  formSubmit(form, async () => {
+    const cardIds = [...form.querySelectorAll('[name="card_id"]:checked')].map(input => Number(input.value));
+    const group = await api('sync/groups',{directory:form.dataset.directory,card_ids:cardIds});
+    $('#sync-dialog').close(); await refresh(); switchView('sync');
+    notice(group.status === 'conflict' ? 'Sync configured. Choose the starting copy because these saves differ.' : 'Sync enabled. Watching selected devices every minute.');
+  });
+});
+$('#sync-source-form').addEventListener('submit', event => {
+  event.preventDefault(); const form = event.currentTarget;
+  formSubmit(form, async () => {
+    await api(`sync/groups/${form.dataset.group}/resolve`,{source_card_id:Number(form.dataset.card)});
+    $('#sync-source-dialog').close(); await refresh(); notice('Source selected. Updates will sync after the cards settle.');
+  });
+});
 $('#transfer-form').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;
   formSubmit(form, async () => {
@@ -298,6 +347,10 @@ document.addEventListener('click', async event => {
       case 'cards': selectedDevice = id; renderCards(); $('#cards-dialog').showModal(); break;
       case 'transfer': openTransfer(id); break;
       case 'delete-save': openTransfer(id, null, true); break;
+      case 'configure-sync': openSync(id); break;
+      case 'retry-sync': await api(`sync/groups/${id}/retry`,{}); await refresh(); break;
+      case 'sync-source': openSyncSource(id, Number(button.dataset.card)); break;
+      case 'toggle-sync': { const group = data.sync_groups.find(g => g.id === id); await api(`sync/groups/${id}`,{enabled:!group.enabled},'PUT'); await refresh(); break; }
       case 'sort-size': librarySort = librarySort === 'size-desc' ? 'size-asc' : 'size-desc'; renderLibrary(); break;
       case 'sort-name': librarySort = librarySort === 'name-asc' ? 'name-desc' : 'name-asc'; renderLibrary(); break;
       case 'slot-copy': openTransfer(id, Number(button.dataset.slot)); break;
