@@ -13,7 +13,7 @@ Available features:
 - Raw/ECC PS2 card scanning, capacity, reviewed whole-save transfers and backups.
 - Raw PS1 card scanning (including subfolders), bitmap icons, multi-block copy/delete and automatic sync.
 - Read-only PSP VMP sources and FTP devices, with offline inventory and fresh downloads before transfers.
-- Platform-grouped game plugins, including FFIX numbered PS1 saves.
+- Platform-grouped game plugins, including FFIX and Chrono Cross numbered PS1 saves.
 - Location removal that preserves files, backups and transfer history.
 - Ar tonelico US slot enumeration and selected-slot copying, including same-card
   and explicit replacement. User-confirmed on real PS2 hardware through OPL

@@ -15,6 +15,18 @@ string fields, and notes for inspection. Plugins have no card-writing API.
 adds generic source and file information. Unsupported games still show that
 generic information.
 
+## Chrono Cross (US PS1)
+
+`ps1/chrono_cross.py` recognizes `BASLUSP01041USCHRO00` through `14`: 15
+numbered saves per card, one 8 KiB block each. It shows 60 Hz playtime at
+`0x588` and stars at `0x5a4`. Copying to another slot changes the save ID,
+fullwidth card-browser label and little-endian checksum at `0x1ffc` (byte sum
+over `[0,0x1ff8)`); compressed state and reserved tail bytes stay unchanged.
+All four distinct private samples passed checksum and renumbering checks for
+every slot. In-game testing of renumbered copies remains outstanding.
+Format references: Game Tools Collection's [layout](https://github.com/RyudoSynbios/game-tools-collection/blob/master/src/lib/templates/chrono-cross/saveEditor/template.ts)
+and [checksum](https://github.com/RyudoSynbios/game-tools-collection/blob/master/src/lib/templates/chrono-cross/saveEditor/utils.ts).
+
 ## Final Fantasy IX (US PS1)
 
 `ps1/ffix.py` recognizes `BASLUS-0125100000-00` through `-14`: each numbered

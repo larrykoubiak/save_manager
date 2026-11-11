@@ -36,3 +36,8 @@ against [gjoerulv's Memoria save editor](https://github.com/gjoerulv/Memoria_FF9
 and [nintendogamer15's FFIX Save Editor](https://github.com/nintendogamer15/ffix-save-editor).
 The Python plugin is implemented here from those format facts; neither editor
 nor its game-data tables is bundled or executed.
+
+Chrono Cross US slot IDs, preview offsets and byte-sum checksum were
+cross-checked against [RyudoSynbios's Game Tools Collection](https://github.com/RyudoSynbios/game-tools-collection)
+and private saves. The Python adapter is implemented from those format facts;
+no editor code or game-data tables from that project are bundled.
