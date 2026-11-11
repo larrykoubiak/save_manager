@@ -5,7 +5,7 @@ import unittest
 
 from save_core.compare_saves import scan
 from game_plugins import merger_for_game, plugin_for, slot_number
-from game_plugins.ar_tonelico import ArTonelicoUS, SAVE_SIZE, SLOT_COUNT, SLOT_SIZE, checksum
+from game_plugins.ps2.ar_tonelico import ArTonelicoUS, SAVE_SIZE, SLOT_COUNT, SLOT_SIZE, checksum
 from save_core.save_copy import plan_copy
 from save_core.save_inspection import inspect_save
 from test_save_copy import generic_save

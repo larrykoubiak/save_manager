@@ -7,7 +7,7 @@ import unittest
 import zlib
 
 from game_plugins import plugin_for
-from game_plugins.katamari import KatamariDamacyUS as Plugin, DIRECTORY, SLOT_SIZE, OPTIONS_SIZE
+from game_plugins.ps2.katamari import KatamariDamacyUS as Plugin, DIRECTORY, SLOT_SIZE, OPTIONS_SIZE
 from save_core.save_copy import apply_copy, plan_slot_copy, plan_copy
 from save_web.inventory import snapshot_location
 from test_save_copy import generic_save, snapshot

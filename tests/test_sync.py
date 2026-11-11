@@ -133,7 +133,7 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.tick()['status'],'blocked')
         self.assertEqual(self.payload(1),b'initial')
         self.service.save_location(self.devices[1],{'writable':True},self.locations[1])
-        with patch('save_web.sync.plan_copy',side_effect=ValueError('Not enough free space')):
+        with patch('save_core.backends.ps2.PS2Backend.plan_copy',side_effect=ValueError('Not enough free space')):
             self.assertEqual(self.tick()['status'],'blocked')
         self.assertEqual(self.payload(1),b'initial')
         # Change a card after its scan: hash validation prevents a stale write.
@@ -222,7 +222,7 @@ class SyncTest(unittest.TestCase):
             with service.db.connect() as db:
                 db.execute("UPDATE jobs SET status='done' WHERE id=?", (key,))
             scans.append(key)
-            clock[0] += 61  # New scans are due before this queue can drain.
+            clock[0] += service.sync.scan_seconds + 1  # Scans become due before the queue drains.
             if len(scans) == 5:
                 service.stop_event.set()
 

@@ -16,31 +16,29 @@ class Breakdown:
     notes: tuple = ()
 
 
-def plugin_for(save_directory):
-    from .ffx import FFXInternational
-    from .ar_tonelico import ArTonelicoUS
-    from .dothack import DotHackInfectionUS
-    from .katamari import KatamariDamacyUS
-    from .steambot import SteambotChroniclesUS
-    from .thps4 import THPS4CareerUS
-    for plugin in (FFXInternational, ArTonelicoUS, DotHackInfectionUS, KatamariDamacyUS, SteambotChroniclesUS, THPS4CareerUS):
-        if plugin.supports(save_directory):
-            return plugin
-    return None
+def plugins_for(backend_id):
+    if backend_id == 'ps2':
+        from .ps2 import PLUGINS
+    elif backend_id == 'ps1':
+        from .ps1 import PLUGINS
+    else:
+        return ()
+    return PLUGINS
 
 
-def slot_number(save_directory):
-    plugin = plugin_for(save_directory)
+def plugin_for(save_directory, backend_id='ps2'):
+    return next((plugin for plugin in plugins_for(backend_id) if plugin.supports(save_directory)), None)
+
+
+def slot_number(save_directory, backend_id='ps2'):
+    plugin = plugin_for(save_directory, backend_id)
     read_slot = getattr(plugin, 'slot_number', None)
     return read_slot(save_directory) if read_slot else None
 
 
-def merger_for_game(game_id):
-    from .ffx import FFXInternational
-    for plugin in (FFXInternational,):
-        if game_id in plugin.merge_game_ids:
-            return plugin
-    return None
+def merger_for_game(game_id, backend_id='ps2'):
+    return next((plugin for plugin in plugins_for(backend_id)
+                 if game_id in getattr(plugin, 'merge_game_ids', ())), None)
 
 
 def slot_data(plugin, save_directory, save_files):

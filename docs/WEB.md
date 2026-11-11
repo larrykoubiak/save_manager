@@ -1,13 +1,12 @@
 # Device dashboard
 
 Save Manager stores its device inventory in SQLite and serves a browser UI
-through Waitress. Its PS2 reader is a vendored dependency. A read-only report
+through Waitress. PS1 and PS2 readers are internal storage backends. A read-only report
 command and shared backend helpers are also available.
 
 ## Run locally
 
 ```bash
-git submodule update --init --recursive
 python -m venv .venv
 .venv/bin/python -m pip install .
 .venv/bin/save-manager
@@ -28,8 +27,7 @@ Same-origin checks protect browser mutations; there is no CORS access.
 
 ## Docker
 
-Initialize submodules before building: `git submodule update --init --recursive`.
-The Docker build uses the pinned reader source already present in the checkout.
+The Docker build includes the internal storage backends from this checkout.
 
 Keep machine-specific bind mounts in the ignored `compose.override.yaml`:
 
@@ -40,16 +38,16 @@ docker compose up --build -d
 ```
 
 Compose automatically combines the shared configuration with your local override.
-The example uses `/path/to/your/memcards` on the host and `/cards/emulator`
+The example uses `/path/to/your/device` on the host and `/devices/emulator`
 inside the container. It refuses to create a missing host folder, so a typo
-fails visibly. Add another bind entry for each card folder you want to expose.
+fails visibly. Mount each device root once; add its system folders as relative locations in the UI.
 The shared `compose.yaml` runs without an override when no card mounts are needed.
 
 Open <http://127.0.0.1:8081>. To choose another host port, set
 `SAVE_MANAGER_PORT`, for example `SAVE_MANAGER_PORT=9090 docker compose up --build -d`.
 The container continues listening on its internal port 8080.
-Register your container paths (such as `/cards/emulator`) in
-the dashboard, rather than their host paths. The named volume stores the
+Set the device root to its container path (such as `/devices/emulator`), then
+add relative locations such as `VMC` and `POPS`. The named volume stores the
 SQLite database and transfer backups across container recreation.
 
 The container runs as UID/GID **10001**. For transfers, set `read_only: false` on
@@ -60,9 +58,20 @@ file to match `id -u` / `id -g`. The persistent `/data` volume must also be
 owned by that user, including existing database files and backups. Do not recursively change ownership
 of shared save folders just to run the app.
 
-Keep network storage mounted on the host. This container does not discover,
+Keep filesystem network storage mounted on the host. FTP devices connect
+directly from the container without a host mount. The app does not discover,
 mount, or wake consoles. Plugging a handheld into another computer does not
 make it visible here automatically.
+
+For a PSP, select **FTP** when adding the device, enter its host/port and
+username (`anonymous` by default), and use `/` as the remote root. Add a PS1
+location at `PSP/SAVEDATA` with the `.vmp` filter. Start FTP on the handheld,
+disconnect other FTP clients, and click **Scan now**; manual-only is the default.
+FTP locations are read-only sources. Valid scans are cached locally, failed
+scans retain the last inventory, and copies re-fetch the source before preview
+and apply so an offline cache is never silently used. Passwords remain in the
+private SQLite database and are omitted from API responses; an empty password
+field in the UI keeps the existing password unless **Clear saved password** is checked.
 
 ## Remote access through Cloudflare Tunnel
 
@@ -92,12 +101,30 @@ and hostname routing are managed in your Cloudflare account.
 
 ## Workflow
 
-1. **Add device**: choose a name, device type, and manual scans or a polling
+The **PS1** and **PS2** tabs open separate system pages, each with its own
+sources, device columns, saves and sync groups. Pages have bookmarkable URLs
+such as `#/systems/ps1/library` and `#/systems/ps2/sync`. Search and sort choices
+stay separate while switching systems. Devices and activity remain shared;
+one RetroArch device can have locations for several systems.
+
+On a system page, **Add PS1/PS2 location…** fixes the system and asks for a
+shared device and a new folder. The global Devices page can configure either
+system. Then choose an extension or **All supported card files**.
+PS1 currently reads raw 128 KiB card images, commonly `.mcr`, `.mcd`
+and RetroArch `.srm`. PSP `.vmp` containers are read-only sources: their 128-byte
+header is preserved, but signatures are not verified or regenerated yet.
+Other headered formats such as `.gme` are not supported.
+Cards must already be formatted. PS1 has 15 usable 8 KiB blocks; capacity and save
+sizes are displayed in KiB. PS1 does not store save timestamps. Bitmap icons use
+the BIOS animation cadence. Individual in-game slots require a game plugin.
+Copies and sync groups stay within their platform, even when save names match.
+
+1. **Add device**: choose a name, absolute root folder visible to the server, device type, and manual scans or a polling
    interval. The API accepts 60 seconds through seven days; the UI offers
    common intervals. Device type is a label, not a native save-format driver.
-2. **Add location**: choose an absolute folder visible to the server, `.ps2`
-   or `.bin` PS2 images, and whether reviewed destination writes are allowed.
-   Multiple locations can belong to one device. Scans do not recurse.
+2. **Add location**: choose a folder relative to the device root (`.` for the root),
+   its system, card-file extension, and whether destination writes are allowed.
+   Multiple locations can belong to one device. PS1 scans include subfolders.
 3. Optionally configure an **availability marker**: a filename such as
    `.save-manager-online` that you create on the actual mounted storage.
    If the marker disappears, a leftover empty mount folder is treated as
@@ -129,7 +156,7 @@ and hostname routing are managed in your Cloudflare account.
    verified backup, replaces the destination atomically, and queues a rescan.
 
 Use **Sync…** beside a save to opt into automatic sync across selected cards.
-Enabled groups scan their devices every minute, require two unchanged scans
+Enabled groups scan their devices every five minutes, require two unchanged scans
 and at least 30 seconds of settling, then copy the changed save with a full
 destination-card backup. The Sync tab shows pending, blocked and conflict states.
 Different initial copies require choosing a source. Independently changed
@@ -220,10 +247,11 @@ HTTP Basic authentication applies when `SAVE_MANAGER_TOKEN` is configured.
 | GET | `/healthz` | Public liveness/database check; `{status: "ok"}` |
 | GET | `/api/inventory` | Coherent snapshot: devices, locations, cards, saves, internal `slots`, latest 50 jobs and transfers |
 | GET | `/api/icons/{sha256}.gif` | Authenticated, cached GIF from the scanned icon model; `?static=1` returns a still; `placeholder` gives a neutral icon |
-| POST | `/api/devices` | `name`, optional `kind`, `poll_seconds` (0 means manual); 201 device |
-| PUT | `/api/devices/{id}` | Update `name`, `kind`, or `poll_seconds`; 200 device |
-| POST | `/api/devices/{id}/locations` | `name`, `path`; optional `suffix`, `writable`, `marker`; 201 location |
-| PUT | `/api/devices/{id}/locations/{location}` | Update `name`, `writable`, `marker`; path/format stay attached to their history |
+| POST | `/api/devices` | `name`, `root_path`; optional `kind`, `poll_seconds` (0 means manual), `transport` (`filesystem`/`ftp`), `ftp_host`, `ftp_port`, `ftp_username`, `ftp_password`; 201 device |
+| PUT | `/api/devices/{id}` | Update device fields; omitted `ftp_password` keeps the saved password; changing connection requires fresh scans; responses omit the password and expose `has_ftp_password` |
+| POST | `/api/devices/{id}/locations` | `name`, `path` (relative to device root); optional `backend` (`ps1`/`ps2`, default `ps2`), `suffix` (or `*`), `writable`, `marker`; 201 location |
+| PUT | `/api/devices/{id}/locations/{location}` | Update `name`, `writable`, `marker`; path/platform/format stay attached to their history |
+| DELETE | `/api/devices/{id}/locations/{location}` | Remove registration and inventory from active views; retain disk files, backups and history; cancel previews and pause affected sync groups |
 | POST | `/api/devices/{id}/scan` | `{}`; 202 queued or already active job |
 | POST | `/api/transfers/preview` | `save_id`, `destination_card_id`, optional `conflict`: `stop`, `keep_both`, `replace`; internal slot copy additionally requires `source_slot`, `destination_slot` (1–12), supports only `stop`/`replace`; 201 preview |
 | POST | `/api/transfers/{id}/apply` | `cards_idle: true`; 200 completed transfer with backup path or null for identical content |
@@ -241,18 +269,19 @@ the scan has succeeded. A transfer that fails after preview records its
 error in transfer history. IDs are server-owned: requests cannot supply
 arbitrary source or destination filenames for transfers.
 
-Schema version 6 uses `PRAGMA user_version`; older inventories migrate
-automatically, including sync groups, per-card baselines and stable observations.
+Schema version 10 uses `PRAGMA user_version`; older inventories migrate
+automatically, including per-location platforms, platform-specific sync groups,
+per-card baselines and stable observations.
 Existing inventory/history is retained. A newer database is rejected.
 SQLite has foreign keys, WAL journaling, per-request connections, atomic
 location inventory commits, and a unique active scan per device.
 
 ## Scope and next work
 
-This version supports mounted **PS2 .ps2 / .bin** cards, including raw/ECC
-handling already implemented in the reader. PS1 card backends, native
-PSP/Vita/PS3 save formats and device agents/connectors are future work. A PS3
-device can be registered now if its PS2 images are available through a mount.
+This version supports mounted **PS1 raw 128 KiB** and **PS2 .ps2 / .bin** cards,
+including raw/ECC PS2 handling, plus read-only FTP acquisition and PSP `.vmp`
+sources. VMP signing/writes, other headered PS1 containers, native PSP/Vita/PS3
+save formats and FTP uploads remain future work.
 
 ## Verification
 

@@ -8,7 +8,7 @@ timer-to-seconds conversion: 0x13ac7c. See README.md for evidence and scope.
 import struct
 import hashlib
 
-from . import Breakdown, Section
+from .. import Breakdown, Section
 
 
 SLOT_SIZE = 0x6f46

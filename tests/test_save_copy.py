@@ -4,12 +4,13 @@ import unittest
 from unittest.mock import patch
 
 from save_core.compare_saves import scan
-from game_plugins.ffx_slots import prepare_slot
+from save_core.backends.ps2.bundles import from_native
+from game_plugins.ps2.ffx import prepare_slot
 from save_core.save_copy import apply_copy, plan_copy, plan_delete, tree_snapshot
 from test_ffx_slots import source_save
 from test_save_merge import card_file
-from vendor.mymcplusplus.mymcplusplus.ps2mc import ps2mc, PS2MC_FAT_ALLOCATED_BIT, PS2MC_FAT_CHAIN_END
-from vendor.mymcplusplus.mymcplusplus.save.ps2save import PS2SaveFile
+from save_core.backends.ps2.native.ps2mc import ps2mc, PS2MC_FAT_ALLOCATED_BIT, PS2MC_FAT_CHAIN_END
+from save_core.backends.ps2.native.native_save import PS2SaveFile
 
 
 def generic_save(name, payload):
@@ -134,7 +135,7 @@ class SaveCopyTest(unittest.TestCase):
         # Different icon bytes produce a real directory conflict without changing the payload checksum.
         entry, _ = other.get_file(2)
         other.set_file(2, entry, b'other icon')
-        card_file(self.destination, [other, prepare_slot(source_save(), 2)], False)
+        card_file(self.destination, [other, prepare_slot(from_native(source_save()), 2)], False)
         before = self.destination.read_bytes()
         with self.assertRaisesRegex(ValueError, 'already occupies'):
             plan_copy(self.source, self.record, self.destination)

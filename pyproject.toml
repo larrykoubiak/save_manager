@@ -34,10 +34,10 @@ version = {attr = "save_core.app_info.__version__"}
 [tool.setuptools.packages.find]
 include = [
   "save_core",
+  "save_core.*",
   "save_web",
   "game_plugins",
-  "vendor.mymcplusplus.mymcplusplus",
-  "vendor.mymcplusplus.mymcplusplus.save",
+  "game_plugins.*",
 ]
 namespaces = true
 

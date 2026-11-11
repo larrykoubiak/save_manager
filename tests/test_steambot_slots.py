@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from game_plugins import plugin_for
-from game_plugins.steambot import SteambotChroniclesUS as Plugin, DIRECTORY, SLOT_SIZE, BODY_SIZE, COMMON_SIZE, TABLE, decode
+from game_plugins.ps2.steambot import SteambotChroniclesUS as Plugin, DIRECTORY, SLOT_SIZE, BODY_SIZE, COMMON_SIZE, TABLE, decode
 from save_core.save_copy import apply_copy, plan_copy, plan_slot_copy
 from save_core.save_inspection import inspect_save
 from save_web.inventory import snapshot_location

@@ -1,19 +1,19 @@
 import hashlib
 from pathlib import Path
-import tarfile
 import tempfile
 import unittest
 
 from save_core.compare_saves import scan
+from test_save_merge import card_file
+from test_ffx_slots import source_save
 
 
 class UnformattedCardTest(unittest.TestCase):
     def test_valid_card_is_read_and_erased_cards_are_reported_unchanged(self):
-        fixture = Path(__file__).resolve().parents[1] / 'vendor/mymcplusplus/test/data.tar.gz'
-        with tempfile.TemporaryDirectory() as directory, tarfile.open(fixture) as archive:
+        with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             good = directory / 'Mcd001.ps2'
-            good.write_bytes(archive.extractfile('mc01.ps2').read())
+            card_file(good, [source_save()], True)
             blank = directory / 'Mcd002.ps2'
             blank.write_bytes(bytes([255]) * 8650752)
             zero = directory / 'zero.ps2'

@@ -9,8 +9,9 @@ import struct
 import unicodedata
 import zlib
 
-from . import Breakdown, Section
-from vendor.mymcplusplus.mymcplusplus.save.ps2save import PS2SaveFile
+from .. import Breakdown, Section
+from dataclasses import replace
+from save_core.backends.base import SaveBundle
 
 
 PREFIX = 'BASLUS-20504'
@@ -127,11 +128,11 @@ class THPS4CareerUS:
         return {'summary': label}
 
     @classmethod
-    def prepare_copy(cls, source, occupied_directories):
+    def prepare_copy(cls, source: SaveBundle, occupied_directories):
         """Return a separately named career and its transfer action label."""
-        directory = source.get_directory()[8].decode('ascii')
-        files = {entry[8].decode('ascii'): data for entry, data in source}
-        if len(source) != 3 or set(files) != {directory, 'icon.sys', 'thps4.ico'}:
+        directory = source.save_id
+        files = source.file_data()
+        if len(source.files) != 3 or set(files) != {directory, 'icon.sys', 'thps4.ico'}:
             raise ValueError('Unexpected THPS4 career file set.')
         data = files[directory]
         old_name, summary, start, end, used = career_info(directory, data)
@@ -166,16 +167,8 @@ class THPS4CareerUS:
         if len(new_title) >= 68:
             raise ValueError('Renamed THPS4 icon title is too long.')
         icon[192:260] = new_title.ljust(68, b'\0')
-        result = PS2SaveFile()
-        new_entry = list(source.get_directory())
-        new_entry[8] = new_directory.encode('ascii')
-        result.set_directory(new_entry)
-        for index, (entry, contents) in enumerate(source):
-            entry = list(entry)
-            filename = entry[8].decode('ascii')
-            if filename == directory:
-                entry[8], contents = new_directory.encode('ascii'), bytes(payload)
-            elif filename == 'icon.sys':
-                contents = bytes(icon)
-            result.set_file(index, entry, contents)
+        result = replace(source, save_id=new_directory, files=tuple(
+            replace(file, name=new_directory if file.name == directory else file.name,
+                    data=bytes(payload) if file.name == directory else bytes(icon) if file.name == 'icon.sys' else file.data)
+            for file in source.files))
         return result, f'Copy as career “{name}”'

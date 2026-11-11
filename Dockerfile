@@ -7,8 +7,6 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE THIRD_PARTY.md ./
 COPY save_core/ ./save_core/
 COPY game_plugins/ ./game_plugins/
-COPY vendor/mymcplusplus/mymcplusplus/*.py ./vendor/mymcplusplus/mymcplusplus/
-COPY vendor/mymcplusplus/mymcplusplus/save/ ./vendor/mymcplusplus/mymcplusplus/save/
 COPY save_web/ ./save_web/
 RUN pip install --no-cache-dir . \
     && groupadd --gid 10001 savemanager \

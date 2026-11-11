@@ -1,4 +1,0 @@
-[submodule "vendor/mymcplusplus"]
-	path = vendor/mymcplusplus
-	url = https://github.com/larrykoubiak/mymcplusplus.git
-	branch = vendor-local

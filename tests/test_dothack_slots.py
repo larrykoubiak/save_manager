@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from game_plugins import plugin_for
-from game_plugins.dothack import DotHackInfectionUS as Plugin, DIRECTORY, SLOT_SIZE
+from game_plugins.ps2.dothack import DotHackInfectionUS as Plugin, DIRECTORY, SLOT_SIZE
 from save_core.compare_saves import scan
 from save_core.save_copy import apply_copy, plan_copy, plan_slot_copy
 from save_web.inventory import snapshot_location

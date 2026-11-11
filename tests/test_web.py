@@ -324,7 +324,7 @@ class WebTest(unittest.TestCase):
         for body in [{'name':''},{'name':'test','poll_seconds':1},{'name':'test','poll_seconds':True}]:
             self.assertEqual(self.request('/api/devices',body,'POST')[0],400)
         for body in [
-            {'name':'x','path':'relative'},
+            {'name':'x','path':'../escape'},
             {'name':'x','path':str(self.root / 'data')},
             {'name':'x','path':str(self.source / 'nested')},
             {'name':'x','path':str(self.root / 'other'),'marker':'../escape'},
@@ -395,7 +395,7 @@ class WebTest(unittest.TestCase):
 
     def test_slot_http_transfer_inventory_audit_and_offline_retention(self):
         from test_ar_tonelico import fixture, DIRECTORY
-        from game_plugins.ar_tonelico import SLOT_SIZE
+        from game_plugins.ps2.ar_tonelico import SLOT_SIZE
         save, target = self.ar_cards()
         self.assertEqual(len(self.service.inventory()['slots']), 24)
         before = (self.destination / 'target.bin').read_bytes()

@@ -9,7 +9,6 @@ whole saves or supported individual slots with a preview and verified backup.
 Requires Python 3.10+. Linux is the initial supported platform.
 
 ```bash
-git submodule update --init --recursive
 python -m venv .venv
 .venv/bin/python -m pip install .
 .venv/bin/save-manager
@@ -34,9 +33,13 @@ and tunnel configuration.
 
 ## Features
 
-- Named devices with multiple mounted locations, manual scans or polling.
+- Named devices with mounted folders or read-only FTP sources, manual scans or polling.
+- Separate system pages with their own sources, saves and sync groups; devices
+  remain shared across systems.
 - SQLite inventory with last-known copies retained when devices are offline.
 - PS2 `.ps2` / `.bin` cards, raw/ECC formats, capacity and animated save icons.
+- PS1 raw 128 KiB cards (`.mcr`, `.mcd`, `.srm`, `.bin`, `.mem`, `.vm1`, `.vmc`),
+  animated bitmap icons, multi-block save copying, deletion and automatic sync.
 - Reviewed whole-save copying with conflict detection and atomic replacement.
 - Ar tonelico US: all 12 slots, copying into empty or explicitly replaced slots,
   including on the same card; user-confirmed on real hardware through OPL.
@@ -54,7 +57,8 @@ and tunnel configuration.
 - Opt-in automatic sync per save across selected cards, with stable scans,
   offline queues, conflict selection, and full card backups before writes.
 
-PS1 formats and native device connectors are future work.
+PSP `.VMP` containers can be read as sources; writing/signing them and native
+PSP/Vita/PS3 save formats remain future work.
 Game plugins focus on save slots and safe copying; optional
 inspection/merge helpers remain in the shared backend.
 
@@ -70,13 +74,12 @@ ps2-save-report --emulator-dir /path/to/memcards --vmc-dir /path/to/VMC
 
 ## Project and dependencies
 
-This repository belongs to Save Manager. The mymc++ reader, original project
-files and locally preserved upstream Git history live under
-[`vendor/`](vendor/README.md). The root repository starts its own history and
-has no remote configured. The reader is a submodule pinned to our fork. Clone
-with `git clone --recurse-submodules <app-repository>` or initialize submodules
-as shown above before installing/building. Attribution and GPLv3-or-later licensing remain in
-[THIRD_PARTY.md](THIRD_PARTY.md) and [LICENSE](LICENSE).
+Storage backends live in `save_core/backends/`, with a small shared protocol
+and neutral save bundles. PS2 is the first implementation; its internal
+filesystem and icon primitives are adapted from mymc/mymc+/mymc++. No external
+reader package or submodule initialization is required. Attribution and
+GPLv3-or-later licensing remain in [THIRD_PARTY.md](THIRD_PARTY.md) and
+[LICENSE](LICENSE).
 
 Private saves, backups and analysis under ignored `experiments/` are excluded
 from distributions and Docker builds.

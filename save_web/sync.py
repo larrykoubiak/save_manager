@@ -5,16 +5,16 @@ from pathlib import Path
 import time
 import uuid
 
-from save_core.save_copy import apply_copy, plan_copy, image_file
+from save_core.save_copy import apply_copy
+from save_core.backends import get_backend
 from save_core.save_merge import digest, stable_read
-from vendor.mymcplusplus.mymcplusplus.ps2mc import ps2mc
 from .service import now
 
 
 class Sync:
     settle_seconds = 30
-    scan_seconds = 60
-    fresh_seconds = 150
+    scan_seconds = 300
+    fresh_seconds = scan_seconds + 90
 
     def __init__(self, service):
         self.service = service
@@ -36,14 +36,18 @@ class Sync:
     def configure(self, body):
         with self.service.lock:
             directory = body.get('directory')
-            if not isinstance(directory,str) or not directory or directory in ('.','..') or '/' in directory or '\\' in directory:
-                raise ValueError('Choose one save directory to synchronize.')
+            if not isinstance(directory,str) or not directory or '\0' in directory or len(directory)>255:
+                raise ValueError('Choose one save identity to synchronize.')
             ids = body.get('card_ids')
             if not isinstance(ids,list) or len(ids)<2 or len(ids)>32 or any(type(i) is not int for i in ids) or len(set(ids))!=len(ids):
                 raise ValueError('Select between 2 and 32 different cards.')
             hashes = []
+            backend_id = None
             for key in ids:
-                card, _, _ = self.service._card(key, writable=True)
+                card, location, _ = self.service._card(key, writable=True)
+                if backend_id is not None and backend_id != location['backend']:
+                    raise ValueError('Select cards from the same storage backend.')
+                backend_id = location['backend']
                 if not card['formatted']:
                     raise ValueError('Format each selected card before enabling sync.')
                 saves = self.db.rows('SELECT sha256 FROM saves WHERE card_id=? AND directory=? AND present=1', (key,directory))
@@ -51,10 +55,10 @@ class Sync:
             if not any(hashes):
                 raise ValueError('At least one selected card must contain this save.')
             with self.db.connect() as db:
-                db.execute('''INSERT INTO sync_groups(directory,updated) VALUES (?,?)
-                              ON CONFLICT(directory) DO UPDATE SET enabled=1,head_hash=NULL,source_card_id=NULL,
-                              snapshot=NULL,status='settling',message='',next_scan=0,updated=excluded.updated''', (directory,now()))
-                key = db.execute('SELECT id FROM sync_groups WHERE directory=?',(directory,)).fetchone()[0]
+                db.execute('''INSERT INTO sync_groups(directory,updated,backend) VALUES (?,?,?)
+                              ON CONFLICT(backend,directory) DO UPDATE SET enabled=1,head_hash=NULL,source_card_id=NULL,
+                              snapshot=NULL,status='settling',message='',next_scan=0,updated=excluded.updated''', (directory,now(),backend_id))
+                key = db.execute('SELECT id FROM sync_groups WHERE directory=? AND backend=?',(directory,backend_id)).fetchone()[0]
                 db.execute('DELETE FROM sync_members WHERE group_id=?',(key,))
                 for card_id, baseline in zip(ids,hashes):
                     db.execute('INSERT INTO sync_members(group_id,card_id,baseline_hash) VALUES (?,?,?)',(key,card_id,baseline))
@@ -67,6 +71,8 @@ class Sync:
         if type(body.get('enabled')) is not bool:
             raise ValueError('Enabled must be true or false.')
         with self.service.lock:
+            if body['enabled'] and len(self.members(self.group(key))) < 2:
+                raise ValueError('Choose at least two cards before resuming sync.')
             self.group(key)
             with self.db.connect() as db:
                 db.execute('UPDATE sync_groups SET enabled=?,next_scan=0,updated=? WHERE id=?',(int(body['enabled']),now(),key))
@@ -98,17 +104,11 @@ class Sync:
                 and 0<=at-observation['checked']<=self.fresh_seconds)
 
     def capture(self, group, member):
-        card, _, path = self.service._card(member['card_id'])
+        card, location, path = self.service._card(member['card_id'])
         data = stable_read(path)
         if digest(data)!=card['sha256']:
             raise ValueError('Source changed; waiting for another scan.')
-        with image_file(data,path) as image:
-            memory_card = ps2mc(image)
-            try:
-                if not memory_card.check():
-                    raise ValueError('Source filesystem check failed.')
-            finally:
-                memory_card.close()
+        get_backend(location.get('backend', 'ps2')).validate(data, path)
         folder = self.service.data_dir/'sync'/str(group['id'])
         folder.mkdir(parents=True,exist_ok=True,mode=0o700)
         snapshot = folder/(digest(data)+'.bin')
@@ -256,7 +256,9 @@ class Sync:
         _, location, destination = self.service._card(member['card_id'],writable=True)
         source = Path(group['snapshot'])
         # The captured card is immutable. Only the selected directory is copied.
-        plan = plan_copy(source,{'save':group['directory']},destination,'replace')
+        if location['backend'] != group['backend']:
+            raise ValueError('Sync destination uses a different storage backend.')
+        plan = get_backend(group['backend']).plan_copy(source,{'save':group['directory']},destination,'replace')
         if plan.destination_hash!=member['card_hash']:
             raise ValueError('Destination changed; waiting for another scan.')
         key = uuid.uuid4().hex

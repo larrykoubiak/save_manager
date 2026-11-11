@@ -106,6 +106,8 @@ class Application:
                 return response(201, self.service.save_location(device_id, body))
             if len(parts) == 5 and parts[3] == 'locations' and method == 'PUT':
                 return response(200, self.service.save_location(device_id, body, int(parts[4])))
+            if len(parts) == 5 and parts[3] == 'locations' and method == 'DELETE':
+                return response(200, self.service.delete_location(device_id, int(parts[4])))
             if len(parts) == 4 and parts[3] == 'scan' and method == 'POST':
                 return response(202, self.service.queue_scan(device_id))
         if path == '/api/transfers/preview' and method == 'POST':

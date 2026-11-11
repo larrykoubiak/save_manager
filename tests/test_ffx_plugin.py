@@ -2,7 +2,7 @@ import struct
 import unittest
 
 from game_plugins import plugin_for
-from game_plugins.ffx import FFXInternational, checksum
+from game_plugins.ps2.ffx import FFXInternational, checksum
 
 
 def fixture():

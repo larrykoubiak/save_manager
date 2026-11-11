@@ -4,8 +4,8 @@ services:
   save-manager:
     volumes:
       - type: bind
-        source: /path/to/your/memcards
-        target: /cards/emulator
+        source: /path/to/your/device
+        target: /devices/emulator
         read_only: true
         bind:
           create_host_path: false

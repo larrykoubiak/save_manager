@@ -1,7 +1,7 @@
 import struct
 import unittest
 
-from vendor.mymcplusplus.mymcplusplus.ps2icon import Corrupt, FileTooSmall, Icon
+from save_core.backends.ps2.native.ps2icon import Corrupt, FileTooSmall, Icon
 
 
 def model(texture_type, texture):

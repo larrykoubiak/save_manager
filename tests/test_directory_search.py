@@ -1,9 +1,9 @@
 import unittest
 import io
 
-from vendor.mymcplusplus.mymcplusplus.ps2mc import ps2mc
-from vendor.mymcplusplus.mymcplusplus.ps2mc_dir import DF_EXISTS
-from vendor.mymcplusplus.mymcplusplus.ps2mc_dir import unpack_dirent
+from save_core.backends.ps2.native.ps2mc import ps2mc
+from save_core.backends.ps2.native.ps2mc_dir import DF_EXISTS
+from save_core.backends.ps2.native.ps2mc_dir import unpack_dirent
 from test_ffx_slots import source_save
 from save_core.save_merge import files
 

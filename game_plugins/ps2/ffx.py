@@ -1,4 +1,4 @@
-"""Read-only decoder for the PS2 FFX International saves tested here.
+"""PS2 FFX International decoding and byte-only slot copying.
 
 Field offsets and checksum behavior cross-checked against FFXED and the
 FFX checksum utility. See game_plugins/README.md for references and scope.
@@ -7,7 +7,9 @@ FFX checksum utility. See game_plugins/README.md for references and scope.
 import re
 import struct
 
-from . import Breakdown, Section
+from .. import Breakdown, Section
+from dataclasses import replace
+from save_core.backends.base import SaveBundle
 
 
 SAVE_SIZE = 25848
@@ -55,7 +57,6 @@ class FFXInternational:
 
     @staticmethod
     def prepare_slot(source, slot):
-        from .ffx_slots import prepare_slot
         return prepare_slot(source, slot)
 
     @staticmethod
@@ -126,3 +127,55 @@ class FFXInternational:
             'Story and room markers are internal IDs, not completion percentages.',
             'Character data includes stored values for characters not yet recruited. Base stats exclude bonuses.',
         ))
+
+
+def clone_slot(source: SaveBundle, destination_slot):
+    if type(destination_slot) is not int or not 1 <= destination_slot <= 99:
+        raise ValueError('FFX destination slot must be between 1 and 99.')
+    old_name = source.save_id
+    if not FFXInternational.supports(old_name):
+        raise ValueError('Unsupported FFX save directory.')
+    old_slot = FFXInternational.slot_number(old_name)
+    if destination_slot == old_slot:
+        raise ValueError('Choose a different destination slot.')
+    return prepare_slot(source, destination_slot)
+
+
+def prepare_slot(source: SaveBundle, destination_slot):
+    """Validate and copy to a slot, including when its number stays the same."""
+    if type(destination_slot) is not int or not 1 <= destination_slot <= 99:
+        raise ValueError('FFX destination slot must be between 1 and 99.')
+    old_name = source.save_id
+    if not FFXInternational.supports(old_name):
+        raise ValueError('Unsupported FFX save directory.')
+    old_slot = FFXInternational.slot_number(old_name)
+    new_name = old_name[:-2] + f'{destination_slot - 1:02}'
+    old_icon = f'010906{old_slot - 1:02}.ico'
+    new_icon = f'010906{destination_slot - 1:02}.ico'
+    files = source.file_data()
+    if len(source.files) != 3 or set(files) != {old_name, old_icon, 'icon.sys'}:
+        raise ValueError('Unexpected FFX file set; slot cloning is unsupported for this save.')
+    payload = files[old_name]
+    verified_checksum = checksum(payload)
+    if not u16(payload, 26) == u16(payload, 25844) == verified_checksum:
+        raise ValueError('The source FFX payload checksums do not match.')
+    icon_sys = bytearray(files['icon.sys'])
+    if len(icon_sys) != 964 or icon_sys[:4] != b'PS2D':
+        raise ValueError('Unsupported icon.sys structure.')
+    digits = str.maketrans('0123456789', '０１２３４５６７８９')
+    old_label = f'［{old_slot:02}］'.translate(digits).encode('shift_jis')
+    new_label = f'［{destination_slot:02}］'.translate(digits).encode('shift_jis')
+    title = bytes(icon_sys[192:260])
+    if title.count(old_label) != 1:
+        raise ValueError('The FFX slot label could not be identified in icon.sys.')
+    icon_sys[192:260] = title.replace(old_label, new_label)
+    for offset in (260, 324, 388):
+        field = bytes(icon_sys[offset:offset + 64])
+        if field.split(b'\0', 1)[0] != old_icon.encode('ascii'):
+            raise ValueError('Unexpected icon filename references in icon.sys.')
+        icon_sys[offset:offset + len(old_icon)] = new_icon.encode('ascii')
+    renamed = {old_name: new_name, old_icon: new_icon}
+    return replace(source, save_id=new_name, files=tuple(
+        replace(file, name=renamed.get(file.name, file.name),
+                data=bytes(icon_sys) if file.name == 'icon.sys' else file.data)
+        for file in source.files))

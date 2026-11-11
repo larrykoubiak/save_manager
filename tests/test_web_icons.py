@@ -2,6 +2,7 @@
 
 import importlib.util
 import io
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import struct
@@ -63,7 +64,7 @@ class AnimatedIconTest(unittest.TestCase):
         gif = Image.open(io.BytesIO(encode_gif(bytes(data), animated=False))).convert('RGBA')
         alpha = gif.getchannel('A')
         self.assertIsNotNone(alpha.getbbox())
-        self.assertIn(255, alpha.getdata())
+        self.assertIn(255, alpha.tobytes())
         self.assertEqual(gif.getpixel((0, 0))[3], 0)
 
     def test_playback_speed_scales_gif_duration_without_slowing_sampled_frames(self):
@@ -127,7 +128,7 @@ class IconMigrationTest(unittest.TestCase):
         old_schema = re.sub(r'CREATE TABLE IF NOT EXISTS save_slots \(.*?\);', '', SCHEMA, flags=re.S)
         old_schema = old_schema.replace(', source_slot INTEGER, destination_slot INTEGER', '')
         with tempfile.TemporaryDirectory() as directory:
-            with sqlite3.connect(Path(directory) / 'inventory.sqlite3') as db:
+            with closing(sqlite3.connect(Path(directory) / 'inventory.sqlite3')) as db, db:
                 db.executescript(old_schema)
                 db.execute('PRAGMA user_version=2')
                 db.execute("INSERT INTO devices(name,kind) VALUES ('Existing library','PS2')")
@@ -136,13 +137,13 @@ class IconMigrationTest(unittest.TestCase):
             self.assertEqual(service.inventory()['devices'][0]['name'], 'Existing library')
             self.assertEqual(service.inventory()['slots'], [])
             with service.db.connect() as db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
                 columns = {row[1] for row in db.execute('PRAGMA table_info(transfers)')}
                 self.assertTrue({'source_slot','destination_slot'} <= columns)
 
     def test_version_one_inventory_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
-            with sqlite3.connect(Path(directory) / 'inventory.sqlite3') as db:
+            with closing(sqlite3.connect(Path(directory) / 'inventory.sqlite3')) as db, db:
                 db.executescript(SCHEMA.replace('    icon_hash TEXT,\n', ''))
                 db.execute('PRAGMA user_version=1')
                 db.execute("INSERT INTO devices(name,kind) VALUES ('Original PS2','PS2')")
@@ -150,5 +151,5 @@ class IconMigrationTest(unittest.TestCase):
             self.addCleanup(service.close)
             self.assertEqual(service.inventory()['devices'][0]['name'], 'Original PS2')
             with service.db.connect() as db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 6)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 10)
                 self.assertIn('icon_hash', [row[1] for row in db.execute('PRAGMA table_info(saves)')])

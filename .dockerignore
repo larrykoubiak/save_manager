@@ -9,16 +9,24 @@ dist
 experiments
 raw
 tests
-vendor/mymcplusplus/test
-vendor/mymcplusplus/build
-vendor/mymcplusplus/dist
 data
 .env
 *.sqlite3*
-*.ps2
-*.bin
-*.mcr
 
 # Machine-specific card mounts
 compose.override.yaml
 compose.override.yml
+
+# Private memory cards and exported saves
+*.[pP][sS]2
+*.[bB][iI][nN]
+*.[mM][cC][rR]
+*.[mM][cC][dD]
+*.[sS][rR][mM]
+*.[vV][mM][cC]
+*.[vV][mM]1
+*.[vV][mM][pP]
+*.[mM][eE][mM]
+*.[gG][mM][eE]
+*.[pP][sS][uU]
+*.[pP][sS][vV]

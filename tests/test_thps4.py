@@ -7,12 +7,13 @@ import tempfile
 import unittest
 
 from game_plugins import plugin_for
-from game_plugins.thps4 import THPS4CareerUS as Plugin, SAVE_SIZE, NAME_KEY, career_info, crc, directory_for, fullwidth, progress_info
+from save_core.backends.ps2.bundles import from_native, to_native
+from game_plugins.ps2.thps4 import THPS4CareerUS as Plugin, SAVE_SIZE, NAME_KEY, career_info, crc, directory_for, fullwidth, progress_info
 from save_core.save_copy import apply_copy, plan_copy
 from save_web.inventory import snapshot_location
 from test_save_copy import generic_save, snapshot
 from test_save_merge import card_file
-from vendor.mymcplusplus.mymcplusplus.save.ps2save import PS2SaveFile
+from save_core.backends.ps2.native.native_save import PS2SaveFile
 
 
 def payload(name='Larry', body=b'progress to preserve'):
@@ -82,7 +83,8 @@ class THPS4Test(unittest.TestCase):
     def test_keep_both_renames_only_identity_and_checksums_not_game_state(self):
         source = career()
         before = deepcopy(source)
-        result, label = Plugin.prepare_copy(source, {directory_for('Larry')})
+        result, label = Plugin.prepare_copy(from_native(source), {directory_for('Larry')})
+        result = to_native(result)
         self.assertEqual(label, 'Copy as career “Larry 2”')
         new_directory = directory_for('Larry 2')
         self.assertEqual(result.get_directory()[8], new_directory.encode())
@@ -98,10 +100,11 @@ class THPS4Test(unittest.TestCase):
         self.assertIn(fullwidth('Larry 2'), output['icon.sys'][192:260])
         self.assertEqual(source.get_directory(), before.get_directory())
         self.assertEqual(list(source), list(before))
-        third, _ = Plugin.prepare_copy(source, {directory_for('Larry'), new_directory})
+        third, _ = Plugin.prepare_copy(from_native(source), {directory_for('Larry'), new_directory})
+        third = to_native(third)
         self.assertEqual(third.get_directory()[8], directory_for('Larry 3').encode())
         with self.assertRaises(ValueError):
-            Plugin.prepare_copy(source, {directory_for('Larry' + f' {n}') for n in range(2, 100)})
+            Plugin.prepare_copy(from_native(source), {directory_for('Larry' + f' {n}') for n in range(2, 100)})
 
     def test_raw_ecc_backup_preserves_existing_careers_and_other_saves(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -8,12 +8,12 @@ import tempfile
 import unittest
 
 from save_core.compare_saves import scan
-from game_plugins.ar_tonelico import ArTonelicoUS as Plugin, SLOT_SIZE, SLOT_COUNT, checksum
+from game_plugins.ps2.ar_tonelico import ArTonelicoUS as Plugin, SLOT_SIZE, SLOT_COUNT, checksum
 from save_core.save_copy import apply_copy, plan_slot_copy, tree_snapshot
 from test_ar_tonelico import fixture, DIRECTORY
 from test_save_copy import generic_save, snapshot
 from test_save_merge import card_file
-from vendor.mymcplusplus.mymcplusplus.ps2mc import ps2mc
+from save_core.backends.ps2.native.ps2mc import ps2mc
 
 
 def game_save(payload, configuration=b'destination preferences and unlocks'):

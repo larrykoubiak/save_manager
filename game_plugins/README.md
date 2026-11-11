@@ -6,12 +6,30 @@ write live cards themselves. The shared card layer owns preview, preservation
 checks, backup and atomic replacement. Decoding extra progress/stat fields is
 optional supporting information.
 
-The registry in `__init__.py` selects an adapter by save directory. Each plugin
+The registry in `__init__.py` selects a platform package (`ps1/`, `ps2/`),
+then an adapter by save ID. Each game has one module; FFX decoding and slot
+transformations both live in `ps2/ffx.py`. Each plugin
 identifies its payload filename and expected size and returns a `Breakdown` containing named sections,
 string fields, and notes for inspection. Plugins have no card-writing API.
 `save_core/save_inspection.py` reads the selected card with `rb`, invokes the plugin, and
 adds generic source and file information. Unsupported games still show that
 generic information.
+
+## Final Fantasy IX (US PS1)
+
+`ps1/ffix.py` recognizes `BASLUS-0125100000-00` through `-14`: each numbered
+save is one 8 KiB file, not an internal slot in a larger save. It reads leader,
+level, location and 60 Hz playtime, and copies to a chosen slot from 1 to 15.
+Renumbering changes the save ID, fullwidth `FILEnn` title and CRC; all other
+payload bytes are preserved. CRC-16 uses reflected polynomial `0x8408`, seed
+`0xffff`, no final XOR, covering bytes before the little-endian checksum at
+`0x13fe`. Both private USB samples reproduce their stored CRCs and title times.
+Other regions and rerelease formats are not supported. No live cards were
+modified during validation; in-game verification remains outstanding.
+
+Format references: [Memoria SaveMap](https://github.com/gjoerulv/Memoria_FF9SaveEditor/blob/main/SaveMap.cs),
+[Memoria slot-label/checksum handling](https://github.com/gjoerulv/Memoria_FF9SaveEditor/blob/main/SelectSave.cs),
+and [FFIX Save Editor layout](https://github.com/nintendogamer15/ffix-save-editor/blob/main/src/FFIX.SaveEditor.Core/SaveLayout.cs).
 
 ## Final Fantasy X International
 
@@ -49,7 +67,7 @@ in-memory saves for the merge exporter; neither plugin performs filesystem I/O.
 
 ## Experimental FFX slot cloning
 
-`ffx_slots.py` is a separate, experimental transformation for the verified
+The slot transformation in `ps2/ffx.py` handles the verified
 International layout. It returns a new in-memory save object and performs no
 filesystem I/O. It updates the directory/payload/icon filenames and the slot
 label plus three icon filename references in `icon.sys`, following the

@@ -1,8 +1,9 @@
 from copy import deepcopy
 import unittest
 
-from game_plugins.ffx_slots import clone_slot
-from vendor.mymcplusplus.mymcplusplus.save.ps2save import PS2SaveFile
+from game_plugins.ps2.ffx import clone_slot
+from save_core.backends.ps2.bundles import from_native, to_native
+from save_core.backends.ps2.native.native_save import PS2SaveFile
 from test_ffx_plugin import fixture
 
 
@@ -28,7 +29,7 @@ class FFXSlotTest(unittest.TestCase):
     def test_clone_preserves_payload_model_source_and_dates(self):
         source = source_save()
         before = deepcopy(source)
-        result = clone_slot(source, 3)
+        result = to_native(clone_slot(from_native(source), 3))
         self.assertEqual(result.dirent[8], b'BISLPS-25088FF090602')
         files = {ent[8]: data for ent, data in result}
         self.assertEqual(files[b'BISLPS-25088FF090602'], fixture())
@@ -45,9 +46,9 @@ class FFXSlotTest(unittest.TestCase):
     def test_invalid_same_slots_and_unrecognized_metadata_are_rejected(self):
         for slot in (0, 100, 1):
             with self.assertRaises(ValueError):
-                clone_slot(source_save(), slot)
+                clone_slot(from_native(source_save()), slot)
         source = source_save()
         ent, data = source.get_file(1)
         source.set_file(1, ent, bytes(964))
         with self.assertRaises(ValueError):
-            clone_slot(source, 3)
+            clone_slot(from_native(source), 3)

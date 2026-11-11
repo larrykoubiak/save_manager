@@ -5,12 +5,13 @@ import tempfile
 import unittest
 
 from save_core.compare_saves import scan
-from game_plugins.ffx import checksum
-from game_plugins.ffx_slots import prepare_slot
+from game_plugins.ps2.ffx import checksum
+from game_plugins.ps2.ffx import prepare_slot
 from save_core.save_games import group_games
+from save_core.backends.ps2.bundles import from_native, to_native
 from save_core.save_merge import export_merge, files, plan_merge
 from test_ffx_slots import source_save
-from vendor.mymcplusplus.mymcplusplus.ps2mc import ps2mc
+from save_core.backends.ps2.native.ps2mc import ps2mc
 
 
 def card_file(path, saves, ecc):
@@ -18,7 +19,7 @@ def card_file(path, saves, ecc):
         card = ps2mc(image, params=(ecc, 512, 16, 16384))
         try:
             for save in saves:
-                card.import_save_file(save, False)
+                card.import_save_file(to_native(save), False)
         finally:
             card.close()
 
@@ -42,7 +43,7 @@ class SaveMergeTest(unittest.TestCase):
         second.set_file(0, entry, bytes(payload))
         self.payloads = {original, bytes(payload)}
         card_file(self.dirs['Emulator'] / 'one.ps2', [first], True)
-        card_file(self.dirs['VMC'] / 'two.bin', [second, prepare_slot(first, 3)], False)
+        card_file(self.dirs['VMC'] / 'two.bin', [second, prepare_slot(from_native(first), 3)], False)
         self.before = {path: hashlib.sha256(path.read_bytes()).digest()
                        for directory in self.dirs.values() for path in directory.iterdir()}
         _, left = scan(self.dirs['Emulator'], '.ps2')
@@ -66,7 +67,7 @@ class SaveMergeTest(unittest.TestCase):
                         save = card.export_save_file('/' + name)
                         payloads.add(files(save)[name])
                         # Full metadata/icon validation works after reopening.
-                        prepare_slot(save, slot + 1)
+                        prepare_slot(from_native(save), slot + 1)
                     self.assertEqual(payloads, self.payloads)
                     self.assertTrue(card.check())
                 finally:
