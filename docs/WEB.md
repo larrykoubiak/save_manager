@@ -25,6 +25,20 @@ exposing it beyond loopback, configure a token and HTTPS through a reverse
 proxy. Anyone with access can configure locations visible to the server.
 Same-origin checks protect browser mutations; there is no CORS access.
 
+## RetroArch cloud folders
+
+When editing cards used by RetroArch cloud sync, mount the complete cloud root,
+including `manifest.server`, rather than mounting only its `saves` subfolder.
+Set the device root to the mounted `saves` directory. Save Manager publishes
+the card's MD5 in the server manifest after a verified transfer and retains the
+old manifest beside the card backup. Publication failure reports a failed
+transfer and attempts to restore the original card. Another client's manifest
+changes are preserved and cause the transfer to stop.
+
+RetroArch uses this manifest to discover remote changes; editing only the card
+can leave clients unaware of the update. Let cloud sync finish before starting
+a game that uses the updated card.
+
 ## Docker
 
 The Docker build includes the internal storage backends from this checkout.
