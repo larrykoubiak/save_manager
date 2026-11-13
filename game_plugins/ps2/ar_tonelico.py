@@ -41,6 +41,19 @@ def playtime(ticks):
 
 
 class ArTonelicoUS:
+    @classmethod
+    def library_slots(cls, bundle):
+        from ..library import LibrarySlot
+        data = bundle.file_data()[cls.payload_name(bundle.save_id)]
+        result = []
+        for info in cls.slots(bundle.save_id, data):
+            if info['state'] != 'occupied':
+                continue
+            number = info['number']
+            record = data[(number-1)*SLOT_SIZE:number*SLOT_SIZE]
+            result.append(LibrarySlot(str(number), number, info['label'], {'record': record}, u32(record, 0x39)//60))
+        return result
+
     name = 'Ar tonelico: Melody of Elemia (US PS2)'
     payload_size = SAVE_SIZE
     slot_count = SLOT_COUNT

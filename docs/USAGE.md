@@ -4,7 +4,14 @@
 
 Start the web app or Docker container as described in [web setup](WEB.md).
 Add a named device and one or more mounted card folders, then **Scan now**.
-The Browser table compares saves across device columns. **Manage** opens
+The **Save library** groups distinct saves by platform and game serial.
+Each game has one set of memory-card port settings. Original card positions
+are kept as source information; destination slots are chosen when building
+target memory cards. Expand a game to browse and download its saves.
+Version history settings apply across platforms and retain old history in
+addition to distinct copies still found on active sources.
+
+The **Cards** table compares saves across device columns. **Manage** opens
 locations, scan settings and **View cards**, including capacity information.
 
 Scanning is read-only. Offline devices retain their last known inventory.
@@ -57,6 +64,6 @@ The console compares exact internal directory names without writing cards.
 CSV output cannot overwrite an input card.
 
 Mount network storage on the host before exposing it to Docker. Read-back
-verifies the mounted file, not remote upload completion. Transfers do not run
-RetroArch cloud sync, change its manifests, configure OPL or propagate deletions.
+verifies the mounted file, not remote upload completion. Transfers publish mounted RetroArch cloud-manifest changes when the complete
+cloud root is exposed, but do not run client sync, configure OPL or propagate deletions.
 Polling updates inventory; transfers remain reviewed actions.

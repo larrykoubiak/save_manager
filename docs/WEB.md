@@ -256,15 +256,26 @@ API bodies and responses are JSON, except icon responses (`image/gif`). Mutation
 (use `{}` when no fields are needed). A supplied `Origin` must match `Host`.
 HTTP Basic authentication applies when `SAVE_MANAGER_TOKEN` is configured.
 
+A device may use the same folder for different systems when their file filters
+are disjoint. For PS3 FTP cards, set the device root to `/dev_hdd0/savedata/vmc`
+and create PS1 and PS2 locations with path `.`, filtering `.vm1` and `.vm2`
+respectively. FTP locations remain read-only sources.
+
 | Method | Path | Body / result |
 | --- | --- | --- |
 | GET | `/healthz` | Public liveness/database check; `{status: "ok"}` |
 | GET | `/api/inventory` | Coherent snapshot: devices, locations, cards, saves, internal `slots`, latest 50 jobs and transfers |
+| GET | `/api/library` | Platform/game-serial tree with flat `games[].saves`, source observations and import errors; legacy `slots` hold source history only; also included as `library` in inventory |
+| PUT | `/api/library/games/{id}` | Per-game `card_ports`: `unknown` (default), `port1`, or `both`; optional `card_port_note` (up to 1,000 characters) for a source or testing note |
+| PUT | `/api/library/settings` | `previous_versions` (0–100, default 2); prune older history and unreferenced objects |
+| GET | `/api/library/versions/{id}/download` | Self-contained ZIP containing extracted slot data, original game bundle and backend metadata |
+| POST | `/api/library/slots/{id}/restore` | `version_id`; select a retained version as current in the library; no device writes |
 | GET | `/api/icons/{sha256}.gif` | Authenticated, cached GIF from the scanned icon model; `?static=1` returns a still; `placeholder` gives a neutral icon |
 | POST | `/api/devices` | `name`, `root_path`; optional `kind`, `poll_seconds` (0 means manual), `transport` (`filesystem`/`ftp`), `ftp_host`, `ftp_port`, `ftp_username`, `ftp_password`; 201 device |
+| DELETE | `/api/devices/{id}` | Remove the device and its locations from active views; preserve files, library versions and history; stop polling and pause affected sync groups |
 | PUT | `/api/devices/{id}` | Update device fields; omitted `ftp_password` keeps the saved password; changing connection requires fresh scans; responses omit the password and expose `has_ftp_password` |
-| POST | `/api/devices/{id}/locations` | `name`, `path` (relative to device root); optional `backend` (`ps1`/`ps2`, default `ps2`), `suffix` (or `*`), `writable`, `marker`; 201 location |
-| PUT | `/api/devices/{id}/locations/{location}` | Update `name`, `writable`, `marker`; path/platform/format stay attached to their history |
+| POST | `/api/devices/{id}/locations` | `name`, `path` (relative to device root); optional `backend` (`ps1`/`ps2`, default `ps2`), `suffix` (or `*`; PS3: `.vm1`/`.vm2`), `writable`, `marker`; 201 location |
+| PUT | `/api/devices/{id}/locations/{location}` | Update `name`, `writable`, `marker`, `suffix`; changing the file filter requires a fresh scan; path/platform stay attached to their history |
 | DELETE | `/api/devices/{id}/locations/{location}` | Remove registration and inventory from active views; retain disk files, backups and history; cancel previews and pause affected sync groups |
 | POST | `/api/devices/{id}/scan` | `{}`; 202 queued or already active job |
 | POST | `/api/transfers/preview` | `save_id`, `destination_card_id`, optional `conflict`: `stop`, `keep_both`, `replace`; internal slot copy additionally requires `source_slot`, `destination_slot` (1–12), supports only `stop`/`replace`; 201 preview |

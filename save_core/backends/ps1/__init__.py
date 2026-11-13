@@ -92,6 +92,7 @@ class PS1Backend:
                     record['slots'] = plugin.slots(entry.name,slot_data(plugin,entry.name,bundle.file_data()))
                 if callable(getattr(plugin,'summary',None)):
                     record.update(plugin.summary(entry.name,slot_data(plugin,entry.name,bundle.file_data())))
+                record['bundle'] = bundle
                 records.append(record)
             stat = path.stat()
             if versions[path]!=(stat.st_size,stat.st_mtime_ns):
@@ -159,6 +160,14 @@ class PS1Backend:
             if card.signature(save_id)==source_card.signature(save_id):
                 return CopyPlan(source,destination,digest(source_data),digest(original),save_id,save_id,'Already identical',b'',original)
             if conflict=='keep_both':
+                named_adapter = getattr(plugin,'prepare_copy',None)
+                if callable(named_adapter):
+                    updated,action = named_adapter(bundle,set(card.entries))
+                    if updated.save_id in card.entries:
+                        raise ValueError('Renamed PS1 save would overwrite an existing save.')
+                    plugin.validate_save(updated.save_id,slot_data(plugin,updated.save_id,updated.file_data()))
+                    return replace(self._plan(source,source_data,destination,original,card,
+                                              updated.save_id,updated,action),source_save=save_id)
                 if not getattr(plugin,'card_slots',False):
                     raise ValueError('Keeping both saves is unsupported for this PS1 game.')
                 slot = next((n for n in range(1,plugin.slot_count+1)

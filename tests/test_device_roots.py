@@ -63,6 +63,46 @@ class DeviceRootsTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'overlap'):
                 service.update_device(second['id'], dict(root_path=str(moved)))
 
+    def test_ps3_shared_folder_uses_disjoint_system_filters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base/'vmc'
+            root.mkdir()
+            (root/'PS1MEMCARD.VM1').write_bytes(fixture([('PS1SAVE',(3,),payload())]))
+            card_file(root/'PS2MEMCARD.VM2',[generic_save('PS2SAVE',b'PS2 data')],True)
+            service = Service(base/'data')
+            self.addCleanup(service.close)
+            device = service.create_device(dict(name='PS3',root_path=str(root)))
+            ps1 = service.save_location(device['id'],dict(name='PS1',path='.',backend='ps1',suffix='.vm1'))
+            ps2 = service.save_location(device['id'],dict(name='PS2',path='.',backend='ps2',suffix='.vm2'))
+            job = service.queue_scan(device['id']);service.run_scan(job['id'])
+            self.assertEqual(service.db.one('SELECT status FROM jobs WHERE id=?',(job['id'],))['status'],'done')
+            inventory = service.inventory()
+            self.assertEqual({c['filename'] for c in inventory['cards'] if c['location_id']==ps1['id']},{'PS1MEMCARD.VM1'})
+            self.assertEqual({c['filename'] for c in inventory['cards'] if c['location_id']==ps2['id']},{'PS2MEMCARD.VM2'})
+            self.assertEqual({s['directory'] for s in inventory['saves']},{'PS1SAVE','PS2SAVE'})
+            # All supported PS2 files must include VM2, too.
+            service.save_location(device['id'],{'suffix':'*'},ps2['id'])
+            job = service.queue_scan(device['id']);service.run_scan(job['id'])
+            self.assertEqual(service.db.one('SELECT status FROM jobs WHERE id=?',(job['id'],))['status'],'done')
+            with self.assertRaisesRegex(ValueError,'overlap'):
+                service.save_location(device['id'],{'suffix':'*'},ps1['id'])
+            with self.assertRaisesRegex(ValueError,'overlap'):
+                service.save_location(device['id'],dict(name='Duplicate',path='.',backend='ps2',suffix='.vm2'))
+            moved = base/'moved'
+            root.rename(moved)
+            service.update_device(device['id'],dict(root_path=str(moved)))
+            # The old uniqueness index must also migrate without losing location IDs.
+            with service.db.connect() as db:
+                db.execute('UPDATE locations SET deleted=1 WHERE id=?',(ps2['id'],))
+                db.execute('DROP INDEX active_location_path')
+                db.execute('CREATE UNIQUE INDEX active_location_path ON locations(device_id,path) WHERE deleted=0')
+                db.execute('PRAGMA user_version=12')
+            Database(service.db.path)
+            with service.db.connect() as db:
+                db.execute('UPDATE locations SET deleted=0 WHERE id=?',(ps2['id'],))
+                self.assertFalse(db.execute('PRAGMA foreign_key_check').fetchall())
+
     def test_version_seven_migration_preserves_ids_and_effective_paths(self):
         old = SCHEMA.replace("    root_path TEXT NOT NULL DEFAULT '/',\n", '')
         old = old.replace('name TEXT NOT NULL, path TEXT NOT NULL, suffix TEXT NOT NULL,',

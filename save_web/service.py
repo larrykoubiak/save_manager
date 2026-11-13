@@ -36,6 +36,8 @@ class Service:
         self.data_dir = Path(data_dir).expanduser().resolve()
         self.db = Database(self.data_dir / 'inventory.sqlite3')
         self.lock = threading.RLock()
+        from .library import SaveLibrary
+        self.library = SaveLibrary(self)
         self.stop_event = threading.Event()
         self.wake = threading.Event()
         self.thread = None
@@ -46,6 +48,7 @@ class Service:
             db.execute("UPDATE jobs SET status='interrupted', finished=?, error='Server restarted; scan again.' WHERE status IN ('queued','running')", (now(),))
             db.execute("UPDATE transfers SET status='expired', finished=?, error='Server restarted; preview again.' WHERE status='preview'", (now(),))
             db.execute("UPDATE transfers SET status='interrupted', finished=?, error='Server stopped during transfer; inspect card and backup before retrying.' WHERE status='applying'", (now(),))
+        self.library.index_plugins()
 
     def create_device(self, body):
         name = text(body.get('name'), 'Device name')
@@ -60,7 +63,7 @@ class Service:
 
     def update_device(self, key, body):
         with self.lock:
-            old = self.db.one('SELECT * FROM devices WHERE id=?', (key,))
+            old = self.db.one('SELECT * FROM devices WHERE id=? AND deleted=0', (key,))
             name = text(body.get('name', old['name']), 'Device name')
             kind = text(body.get('kind', old['kind']), 'Device type', 80)
             interval = poll_interval(body.get('poll_seconds', old['poll_seconds']))
@@ -68,7 +71,7 @@ class Service:
             moved = any(connection[field]!=old[field] for field in connection)
             if moved:
                 for location in self.db.rows('SELECT * FROM locations WHERE device_id=? AND deleted=0', (key,)):
-                    self._check_location_path(device_location_path(connection,location),location['id'],{**old,**connection})
+                    self._check_location_path(device_location_path(connection,location),location['id'],{**old,**connection},location['backend'],location['suffix'])
             with self.db.connect() as db:
                 db.execute('''UPDATE devices SET name=?,kind=?,poll_seconds=?,root_path=?,transport=?,
                               ftp_host=?,ftp_port=?,ftp_username=?,ftp_password=?,next_poll=? WHERE id=?''',
@@ -80,7 +83,7 @@ class Service:
                     db.execute('UPDATE locations SET writable=0 WHERE device_id=?', (key,))
         return public_device(self.db.one('SELECT * FROM devices WHERE id=?', (key,)))
 
-    def _check_location_path(self, path, key=None, device=None):
+    def _check_location_path(self, path, key=None, device=None, backend_id=None, suffix=None):
         device = device or {'transport':'filesystem'}
         transport = device.get('transport','filesystem')
         if transport=='filesystem' and (path == self.data_dir or path in self.data_dir.parents or self.data_dir in path.parents):
@@ -96,11 +99,16 @@ class Service:
                 continue
             other_path = device_location_path(other,other)
             if other['id'] != key and (path == other_path or path in other_path.parents or other_path in path.parents):
-                raise ValueError('Locations must not overlap; register each folder once.')
+                if path == other_path and other['device_id'] == device.get('id') and backend_id != other['backend']:
+                    wanted = set(get_backend(backend_id).suffixes if suffix=='*' else (suffix,))
+                    existing = set(get_backend(other['backend']).suffixes if other['suffix']=='*' else (other['suffix'],))
+                    if wanted.isdisjoint(existing):
+                        continue
+                raise ValueError('Locations must not overlap. Different systems may share one folder only with non-overlapping file filters.')
 
     def save_location(self, device_id, body, key=None):
         with self.lock:
-            device = self.db.one('SELECT * FROM devices WHERE id=?', (device_id,))
+            device = self.db.one('SELECT * FROM devices WHERE id=? AND deleted=0', (device_id,))
             old = self.db.one('SELECT * FROM locations WHERE id=? AND device_id=? AND deleted=0', (key, device_id)) if key else {}
             values = {**old, **body}
             name = text(values.get('name'), 'Location name')
@@ -124,13 +132,15 @@ class Service:
                 raise ValueError('FTP locations are read-only sources for now.')
             if writable and suffix=='.vmp':
                 raise ValueError('PSP VMP cards are read-only until signing support is added.')
-            self._check_location_path(path,key,device)
-            if key and (str(relative) != old['path'] or suffix != old['suffix'] or backend_id != old['backend']):
-                raise ValueError('Add a new location to change path or format; existing history belongs to this location.')
+            self._check_location_path(path,key,device,backend_id,suffix)
+            if key and (str(relative) != old['path'] or backend_id != old['backend']):
+                raise ValueError('Add a new location to change path or system; existing history belongs to this location.')
             args = (name, str(relative), suffix, int(writable), marker, backend_id)
             with self.db.connect() as db:
                 if key:
                     db.execute('UPDATE locations SET name=?,path=?,suffix=?,writable=?,marker=?,backend=? WHERE id=?', args + (key,))
+                    if suffix != old['suffix']:
+                        db.execute("UPDATE locations SET status='never',error=NULL WHERE id=?", (key,))
                 else:
                     key = db.execute('INSERT INTO locations(name,path,suffix,writable,marker,backend,device_id) VALUES (?,?,?,?,?,?,?)',
                                      args + (device_id,)).lastrowid
@@ -139,36 +149,51 @@ class Service:
     def delete_location(self, device_id, key):
         """Unregister a source, retaining audit history and all files on disk."""
         with self.lock, self.db.connect() as db:
-            location = db.execute('SELECT * FROM locations WHERE id=? AND device_id=? AND deleted=0',
-                                  (key, device_id)).fetchone()
-            if location is None:
-                raise LookupError('Location not found.')
-            previews = db.execute('''SELECT id FROM transfers WHERE status='preview' AND
-                (source_card_id IN (SELECT id FROM cards WHERE location_id=?) OR
-                 destination_card_id IN (SELECT id FROM cards WHERE location_id=?))''', (key,key)).fetchall()
-            for preview in previews:
-                self.previews.pop(preview['id'], None)
-                db.execute("UPDATE transfers SET status='cancelled',finished=?,error='Location removed.' WHERE id=?",
-                           (now(), preview['id']))
-            db.execute('''UPDATE sync_groups SET enabled=0,status='paused',head_hash=NULL,
-                source_card_id=NULL,snapshot=NULL,message='Location removed. Choose cards to configure sync again.',updated=?
-                WHERE source_card_id IN (SELECT id FROM cards WHERE location_id=?) OR id IN
-                (SELECT group_id FROM sync_members WHERE card_id IN (SELECT id FROM cards WHERE location_id=?))''',
-                (now(), key, key))
-            db.execute('DELETE FROM sync_members WHERE card_id IN (SELECT id FROM cards WHERE location_id=?)', (key,))
-            db.execute('DELETE FROM sync_observations WHERE card_id IN (SELECT id FROM cards WHERE location_id=?)', (key,))
-            db.execute('UPDATE saves SET present=0 WHERE card_id IN (SELECT id FROM cards WHERE location_id=?)', (key,))
-            db.execute('UPDATE cards SET present=0 WHERE location_id=?', (key,))
-            db.execute('UPDATE locations SET deleted=1 WHERE id=?', (key,))
-            remaining = db.execute('SELECT status,error FROM locations WHERE device_id=? AND deleted=0', (device_id,)).fetchall()
-            states = [row['status'] for row in remaining]
-            status = ('never' if not states else 'online' if all(s=='online' for s in states) else
-                      'partial' if 'online' in states else 'error' if 'error' in states else
-                      'offline' if 'offline' in states else 'never')
-            db.execute('UPDATE devices SET status=?,error=? WHERE id=?',
-                       (status, '; '.join(row['error'] for row in remaining if row['error']) or None, device_id))
-            if not remaining:
-                db.execute("UPDATE jobs SET status='cancelled',finished=? WHERE device_id=? AND status='queued'", (now(),device_id))
+            self._delete_location(db, device_id, key)
+        return {'id': key, 'status': 'deleted'}
+
+    def _delete_location(self, db, device_id, key):
+        location = db.execute('SELECT * FROM locations WHERE id=? AND device_id=? AND deleted=0',
+                              (key, device_id)).fetchone()
+        if location is None:
+            raise LookupError('Location not found.')
+        previews = db.execute('''SELECT id FROM transfers WHERE status='preview' AND
+            (source_card_id IN (SELECT id FROM cards WHERE location_id=?) OR
+             destination_card_id IN (SELECT id FROM cards WHERE location_id=?))''', (key,key)).fetchall()
+        for preview in previews:
+            self.previews.pop(preview['id'], None)
+            db.execute("UPDATE transfers SET status='cancelled',finished=?,error='Location removed.' WHERE id=?",
+                       (now(), preview['id']))
+        db.execute('''UPDATE sync_groups SET enabled=0,status='paused',head_hash=NULL,
+            source_card_id=NULL,snapshot=NULL,message='Location removed. Choose cards to configure sync again.',updated=?
+            WHERE source_card_id IN (SELECT id FROM cards WHERE location_id=?) OR id IN
+            (SELECT group_id FROM sync_members WHERE card_id IN (SELECT id FROM cards WHERE location_id=?))''',
+            (now(), key, key))
+        db.execute('DELETE FROM sync_members WHERE card_id IN (SELECT id FROM cards WHERE location_id=?)', (key,))
+        db.execute('DELETE FROM sync_observations WHERE card_id IN (SELECT id FROM cards WHERE location_id=?)', (key,))
+        db.execute('UPDATE saves SET present=0 WHERE card_id IN (SELECT id FROM cards WHERE location_id=?)', (key,))
+        db.execute('UPDATE cards SET present=0 WHERE location_id=?', (key,))
+        db.execute('UPDATE locations SET deleted=1 WHERE id=?', (key,))
+        remaining = db.execute('SELECT status,error FROM locations WHERE device_id=? AND deleted=0', (device_id,)).fetchall()
+        states = [row['status'] for row in remaining]
+        status = ('never' if not states else 'online' if all(s=='online' for s in states) else
+                  'partial' if 'online' in states else 'error' if 'error' in states else
+                  'offline' if 'offline' in states else 'never')
+        db.execute('UPDATE devices SET status=?,error=? WHERE id=?',
+                   (status, '; '.join(row['error'] for row in remaining if row['error']) or None, device_id))
+        if not remaining:
+            db.execute("UPDATE jobs SET status='cancelled',finished=? WHERE device_id=? AND status='queued'", (now(),device_id))
+
+    def delete_device(self, key):
+        """Unregister a device and its locations, preserving saves and audit history."""
+        with self.lock, self.db.connect() as db:
+            if not db.execute('SELECT id FROM devices WHERE id=? AND deleted=0', (key,)).fetchone():
+                raise LookupError('Device not found.')
+            locations = db.execute('SELECT id FROM locations WHERE device_id=? AND deleted=0', (key,)).fetchall()
+            for location in locations:
+                self._delete_location(db, key, location['id'])
+            db.execute("UPDATE devices SET deleted=1,poll_seconds=0 WHERE id=?", (key,))
+            db.execute("UPDATE jobs SET status='cancelled',finished=? WHERE device_id=? AND status='queued'", (now(),key))
         return {'id': key, 'status': 'deleted'}
 
     def inventory(self):
@@ -176,7 +201,7 @@ class Service:
         with self.db.connect() as db:
             db.execute('BEGIN')
             result = {name: [dict(row) for row in db.execute(query)] for name, query in {
-                'devices': 'SELECT id,name,kind,root_path,transport,ftp_host,ftp_port,ftp_username,length(ftp_password)>0 has_ftp_password,poll_seconds,last_checked,last_seen,status,error,next_poll FROM devices ORDER BY id',
+                'devices': 'SELECT id,name,kind,root_path,transport,ftp_host,ftp_port,ftp_username,length(ftp_password)>0 has_ftp_password,poll_seconds,last_checked,last_seen,status,error,next_poll FROM devices WHERE deleted=0 ORDER BY id',
                 'locations': 'SELECT * FROM locations WHERE deleted=0 ORDER BY id',
                 'cards': 'SELECT c.* FROM cards c JOIN locations l ON l.id=c.location_id WHERE l.deleted=0 ORDER BY filename',
                 'saves': '''SELECT s.*, (SELECT count(*) FROM save_versions v WHERE v.save_id=s.id) AS version_count
@@ -189,6 +214,7 @@ class Service:
                 'sync_groups': 'SELECT * FROM sync_groups WHERE EXISTS(SELECT 1 FROM sync_members m WHERE m.group_id=sync_groups.id) ORDER BY directory',
                 'sync_members': 'SELECT * FROM sync_members ORDER BY group_id,card_id',
             }.items()}
+            result['library'] = self.library.inventory(db)
         result['backends'] = backend_info()
         from game_plugins import plugin_for
         locations = {location['id']: location for location in result['locations']}
@@ -200,14 +226,15 @@ class Service:
         for save in result['saves']:
             backend = locations[cards[save['card_id']]['location_id']]['backend']
             plugin = plugin_for(save['directory'], backend)
+            save['can_keep_both'] = bool(getattr(plugin,'card_slots',False) or callable(getattr(plugin,'prepare_copy',None)))
             if getattr(plugin, 'card_slots', False):
                 save['card_slots'] = dict(number=plugin.slot_number(save['directory']),count=plugin.slot_count,
-                    family=save['directory'][:-2],valid=bool(save['summary']) and not save['summary'].startswith('Progress unavailable:'))
+                    family=getattr(plugin,'library_family',save['directory'][:-2]),valid=bool(save['summary']) and not save['summary'].startswith('Progress unavailable:'))
         return result
 
     def queue_scan(self, device_id, reason='manual'):
         with self.lock, self.db.connect() as db:
-            if not db.execute('SELECT id FROM devices WHERE id=?', (device_id,)).fetchone():
+            if not db.execute('SELECT id FROM devices WHERE id=? AND deleted=0', (device_id,)).fetchone():
                 raise LookupError('Device not found.')
             if not db.execute('SELECT id FROM locations WHERE device_id=? AND deleted=0', (device_id,)).fetchone():
                 raise ValueError('Add a storage location before scanning.')
@@ -260,8 +287,12 @@ class Service:
                     db.execute('''INSERT INTO save_versions(save_id,sha256,first_seen,last_seen) VALUES (?,?,?,?)
                                   ON CONFLICT(save_id,sha256) DO UPDATE SET last_seen=excluded.last_seen''',
                                (save_id, save['sha256'], timestamp, timestamp))
+                    backend = db.execute('SELECT backend FROM locations WHERE id=?', (location_id,)).fetchone()[0]
+                    self.library.capture(db, backend, save, save_id, timestamp)
             db.execute("UPDATE locations SET status='online',error=NULL,last_scanned=?,last_seen=? WHERE id=?",
                        (timestamp, timestamp, location_id))
+            self.library.prune_all(db)
+        self.library.collect()
 
     def run_scan(self, job_id):
         with self.lock:
@@ -298,7 +329,7 @@ class Service:
 
     def enqueue_due(self, at=None):
         at = time.time() if at is None else at
-        for device in self.db.rows('''SELECT * FROM devices d WHERE poll_seconds>0 AND next_poll<=?
+        for device in self.db.rows('''SELECT * FROM devices d WHERE d.deleted=0 AND poll_seconds>0 AND next_poll<=?
                                      AND EXISTS(SELECT 1 FROM locations l WHERE l.device_id=d.id AND l.deleted=0)''', (at,)):
             self.queue_scan(device['id'], 'poll')
 

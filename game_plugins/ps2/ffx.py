@@ -51,6 +51,18 @@ def u16(data, offset):
 
 
 class FFXInternational:
+    library_family = 'BISLPS-25088FF0906'
+
+    @classmethod
+    def library_slots(cls, bundle):
+        from ..library import LibrarySlot
+        data = bundle.file_data()[cls.payload_name(bundle.save_id)]
+        if not u16(data, 26) == u16(data, 25844) == checksum(data):
+            raise ValueError('FFX checksum mismatch.')
+        number = cls.slot_number(bundle.save_id)
+        return [LibrarySlot(str(number), number, cls.summary(bundle.save_id, data)['summary'],
+                            {'data': data}, u32(data, 252))]
+
     name = 'Final Fantasy X International (PS2)'
     payload_size = SAVE_SIZE
     merge_game_ids = ('SLPS-25088',)

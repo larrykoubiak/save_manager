@@ -26,6 +26,14 @@ def validation_error(data, size):
 
 
 class KatamariDamacyUS:
+    @classmethod
+    def library_slots(cls, bundle):
+        from ..library import LibrarySlot
+        data = bundle.file_data()
+        return [LibrarySlot(str(info['number']), info['number'], info['label'],
+                           {'data': data[f"katamari_save{info['number']:02}"]})
+                for info in cls.slots(bundle.save_id, data) if info['state']=='occupied']
+
     name = 'Katamari Damacy (US PS2)'
     slot_count = SLOT_COUNT
 

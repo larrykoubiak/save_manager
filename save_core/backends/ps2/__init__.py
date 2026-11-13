@@ -8,7 +8,7 @@ from .bundles import from_native
 
 class PS2Backend:
     backend_id = 'ps2'
-    suffixes = ('.ps2', '.bin')
+    suffixes = ('.ps2', '.bin', '.vm2')
     capabilities = BackendCapabilities(capacity=True, icons=True, delete=True, file_updates=True)
 
     def snapshot_location(self, location):

@@ -4,9 +4,8 @@ Layout and CRC cross-checked against gjoerulv's Memoria save editor and
 nintendogamer15's FFIX Save Editor; see ../README.md for references.
 """
 
-from dataclasses import replace
-import re
-import struct
+
+from .numbered import NumberedSaveLayout, NumberedSavePlugin, fullwidth_digits
 
 
 PREFIX = 'BASLUS-0125100000-'
@@ -42,74 +41,24 @@ def decode_text(data):
     return ''.join(result).strip()
 
 
-class FinalFantasyIXUS:
+def slot_label(number):
+    return ('ＦＩＬＥ' + fullwidth_digits(f'{number:02}')).encode('shift_jis')
+
+
+def progress(data):
+    leader = decode_text(data[0x106:0x10e])
+    return (f'{leader or "Party leader"} Lv{data[0x105]}', decode_text(data[0x110:0x12c]))
+
+
+class FinalFantasyIXUS(NumberedSavePlugin):
     name = 'Final Fantasy IX (US PS1)'
-    backend_id = 'ps1'
-    card_slots = True
+    title = 'Final Fantasy IX'
+    error_name = 'FFIX'
+    library_family = PREFIX
     slot_count = SLOT_COUNT
-
-    @staticmethod
-    def supports(save_id):
-        return re.fullmatch(re.escape(PREFIX) + r'(?:0[0-9]|1[0-4])', save_id) is not None
-
-    @staticmethod
-    def payload_name(save_id):
-        return 'data'
-
-    @staticmethod
-    def slot_number(save_id):
-        if not FinalFantasyIXUS.supports(save_id):
-            raise ValueError('Unsupported FFIX game/region save ID.')
-        return int(save_id[-2:]) + 1
-
-    @classmethod
-    def validate_save(cls, save_id, data):
-        cls.slot_number(save_id)
-        if not isinstance(data, bytes) or len(data) != SAVE_SIZE:
-            raise ValueError('Expected an 8,192-byte FFIX save.')
-        if data[:4] != b'SC\x11\x01':
-            raise ValueError('Unsupported FFIX save header.')
-        if struct.unpack_from('<H', data, CHECKSUM_OFFSET)[0] != checksum(data):
-            raise ValueError('FFIX checksum mismatch.')
-
-    @classmethod
-    def summary(cls, save_id, data):
-        result = {'row_title': f'Final Fantasy IX · Slot {cls.slot_number(save_id)}'}
-        try:
-            cls.validate_save(save_id, data)
-        except ValueError as error:
-            return {**result, 'summary': 'Progress unavailable: ' + str(error)}
-        seconds = struct.unpack_from('<I', data, 0x12c)[0] // 60
-        hours, remainder = divmod(seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        leader = decode_text(data[0x106:0x10e])
-        location = decode_text(data[0x110:0x12c])
-        progress = [f'{leader or "Party leader"} Lv{data[0x105]}', location,
-                    f'Playtime {hours}:{minutes:02}:{seconds:02}']
-        return {**result, 'summary': ' · '.join(part for part in progress if part)}
-
-    @classmethod
-    def prepare_slot(cls, source, destination_slot):
-        if type(destination_slot) is not int or not 1 <= destination_slot <= SLOT_COUNT:
-            raise ValueError('FFIX destination slot must be between 1 and 15.')
-        old_slot = cls.slot_number(source.save_id)
-        files = source.file_data()
-        if len(source.files) != 1 or set(files) != {'data'}:
-            raise ValueError('Unexpected FFIX save file set.')
-        data = files['data']
-        cls.validate_save(source.save_id, data)
-        if old_slot == destination_slot:
-            return source
-        digits = str.maketrans('0123456789', '０１２３４５６７８９')
-        old_label = ('ＦＩＬＥ' + f'{old_slot:02}'.translate(digits)).encode('shift_jis')
-        new_label = ('ＦＩＬＥ' + f'{destination_slot:02}'.translate(digits)).encode('shift_jis')
-        title = data[4:68]
-        if title.count(old_label) != 1:
-            raise ValueError('FFIX slot label does not match its save ID.')
-        payload = bytearray(data)
-        payload[4:68] = title.replace(old_label, new_label)
-        struct.pack_into('<H', payload, CHECKSUM_OFFSET, checksum(payload))
-        save_id = PREFIX + f'{destination_slot - 1:02}'
-        cls.validate_save(save_id, bytes(payload))
-        return replace(source, save_id=save_id,
-                       files=(replace(source.files[0], data=bytes(payload)),))
+    layout = NumberedSaveLayout(
+        prefix=PREFIX, suffixes=tuple(f'{n:02}' for n in range(SLOT_COUNT)),
+        header=b'SC\x11\x01', size=SAVE_SIZE,
+        checksum_offset=CHECKSUM_OFFSET, checksum_format='<H', checksum=checksum,
+        playtime_offset=0x12c, slot_label=slot_label, progress=progress,
+    )

@@ -9,7 +9,8 @@
   <div class="app-bar">
     <a class="brand" href="/"><span class="browser-orbs" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>Save Manager</a>
     <nav aria-label="Main navigation">
-      <button class="nav active" data-view="library">Browser</button>
+      <button class="nav active" data-view="saves">Save library</button>
+      <button class="nav" data-view="library">Cards</button>
       <button class="nav" data-view="devices">Devices <span id="device-count" class="count">0</span></button>
       <button class="nav" data-view="activity">Activity</button>
       <button class="nav" data-view="sync">Sync</button>
@@ -22,6 +23,12 @@
     <div id="notice" role="status" aria-live="polite" hidden></div>
     <section id="devices-view" hidden>
       <div id="devices"></div>
+    </section>
+    <section id="saves-view" hidden>
+      <div class="table-toolbar"><input id="saved-search" type="search" placeholder="Search games, slots or sources…" aria-label="Search save library"><span id="saved-count" class="hint"></span></div>
+      <details class="library-settings"><summary>Version history settings</summary><form id="library-settings-form" class="source-actions"><label>Previous versions per save <input name="previous_versions" type="number" min="0" max="100" value="2" required></label><button type="submit">Save settings</button><span class="form-error" role="alert"></span></form></details>
+      <p class="hint">Saves are grouped by platform and game serial. Original card positions are source information; destination slots are chosen when building target memory cards. Distinct copies on sources are retained separately from old history.</p>
+      <div id="saved-library"></div><div id="library-errors"></div>
     </section>
     <section id="library-view">
       <details id="system-sources" class="system-sources" open>
@@ -37,6 +44,13 @@
     <section id="activity-view" hidden><div class="section-heading"><h2>Recent activity</h2><span>Scans and reviewed transfers</span></div><div id="activity"></div></section>
     <section id="sync-view" hidden><p class="hint">Enabled saves are checked every five minutes. Changes must settle across two scans before syncing. Offline devices keep pending updates. Every write backs up the destination card; deletions stay local.</p><div id="sync-groups"></div></section>
   </main>
+  <dialog id="game-settings-dialog"><form id="game-settings-form"><div class="dialog-heading"><h2>Game settings</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></div>
+    <p id="game-settings-title"></p>
+    <label>Memory-card ports<select name="card_ports"><option value="unknown">Unknown</option><option value="port1">Port 1 only</option><option value="both">Both ports</option></select></label>
+    <p class="hint">Console memory-card ports, separate from numbered saves inside the game. Use port 1 when support is unknown.</p>
+    <label>Source or testing note <span class="optional">(optional)</span><textarea name="card_port_note" maxlength="1000" rows="3" placeholder="Manual URL, or tested by me…"></textarea></label>
+    <p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Save game settings</button></div>
+  </form></dialog>
   <dialog id="manage-dialog" class="wide"><div class="dialog-heading"><h2 id="manage-title">Device</h2><button class="icon-button" data-close aria-label="Close">×</button></div><div id="manage-content"></div></dialog>
   <dialog id="device-dialog"><form id="device-form"><div class="dialog-heading"><h2 id="device-form-title">Add a device</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></div>
     <label>Device name<input name="name" required maxlength="200" placeholder="Living room PS2"></label>
@@ -53,6 +67,10 @@
     <label>Device type<select name="kind"><option>This machine</option><option>PS2</option><option>PS1</option><option>Pi 5</option><option>RetroPie</option><option>PS Vita</option><option>PSP</option><option>PS3</option><option>Other</option></select></label>
     <label>Scan schedule<select name="poll_seconds"><option value="0">Manual only</option><option value="60">Every minute</option><option value="300">Every 5 minutes</option><option value="900">Every 15 minutes</option><option value="3600">Every hour</option><option value="86400">Every day</option></select></label>
     <p class="hint">Scheduled scans update the inventory. Saves explicitly enabled for automatic sync also monitor their selected devices every five minutes.</p><p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button class="primary" type="submit">Save device</button></div>
+  </form></dialog>
+  <dialog id="delete-device-dialog"><form id="delete-device-form"><div class="dialog-heading"><h2>Remove device</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></div>
+    <p id="delete-device-summary"></p><p>Remove this device and all its locations from Save Manager. Library saves, memory card files, backups, and history stay intact. Sync groups using these cards will pause.</p>
+    <p class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" data-close>Cancel</button><button class="danger" type="submit">Remove device</button></div>
   </form></dialog>
   <dialog id="delete-location-dialog"><form id="delete-location-form"><div class="dialog-heading"><h2>Remove location</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></div>
     <p id="delete-location-summary"></p><p>Remove this location and its cards from Save Manager. Memory card files, backups, and transfer history stay intact. Sync groups using these cards will pause.</p>

@@ -168,3 +168,22 @@ input::placeholder { color: #8d9db8; opacity: 1; }
 .save-size { font-variant-numeric: tabular-nums; }
 .sort-heading { background: transparent; border: 0; padding: 3px 0; color: inherit; font: inherit; font-weight: 600; }
 .sort-heading:hover { color: #f2e7b1; background: transparent; }
+
+.saved-game { margin: 14px 0; border: 1px solid var(--border); background: #0c1423; }
+.saved-game > summary { display: flex; align-items: center; gap: 12px; padding: 12px; cursor: pointer; }
+.saved-game > summary::before { content: '▸'; }
+.saved-game[open] > summary::before { content: '▾'; }
+.saved-icon { width: 44px; height: 44px; object-fit: contain; }
+.saved-table td { vertical-align: top; }
+.saved-table small { display: block; color: var(--muted); margin: 4px 0; }
+.saved-table a { color: #accfff; }
+.library-version { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.library-settings input { width: 70px; }
+.library-errors { margin-top: 20px; }
+
+.game-card-ports { padding: 0 12px 12px; }
+.game-port-note { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+#game-settings-form textarea { font: inherit; color: inherit; background: #070d1b; border: 1px solid #415c83; padding: 8px; width: 100%; box-sizing: border-box; resize: vertical; }
+
+.game-serial { color: #aec9ee; font-size: .9em; white-space: nowrap; }
+.saved-game > summary { flex-wrap: wrap; }

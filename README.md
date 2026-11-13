@@ -36,8 +36,10 @@ and tunnel configuration.
 - Named devices with mounted folders or read-only FTP sources, manual scans or polling.
 - Separate system pages with their own sources, saves and sync groups; devices
   remain shared across systems.
+- Device-independent save library grouped by platform and game serial, with
+  retained versions and downloadable backups.
 - SQLite inventory with last-known copies retained when devices are offline.
-- PS2 `.ps2` / `.bin` cards, raw/ECC formats, capacity and animated save icons.
+- PS2 `.ps2` / `.bin` / `.vm2` cards, raw/ECC formats, capacity and animated save icons.
 - PS1 raw 128 KiB cards (`.mcr`, `.mcd`, `.srm`, `.bin`, `.mem`, `.vm1`, `.vmc`),
   animated bitmap icons, multi-block save copying, deletion and automatic sync.
 - Reviewed whole-save copying with conflict detection and atomic replacement.

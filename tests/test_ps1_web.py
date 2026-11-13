@@ -99,6 +99,33 @@ class PS1WebTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'same storage backend'):
             self.service.sync.configure({'directory':'SAME','card_ids':[self.ids[0],self.ids[2]]})
 
+    def test_file_filter_can_change_without_replacing_location_history(self):
+        location = self.locations[0]
+        self.service.save_location(self.devices[0], {'suffix':'.mcr'}, location['id'])
+        self.scan(0)
+        save = self.save(0)
+        shared = self.cards[0].with_name('pcsx-card1.mcd')
+        shared.write_bytes(blank_card())
+        before = self.cards[0].read_bytes()
+        url = f"/api/devices/{self.devices[0]}/locations/{location['id']}"
+        status, changed = self.request(url, {'suffix':'*'}, 'PUT')
+        self.assertEqual(status, 200, changed)
+        self.assertEqual(changed['id'], location['id'])
+        self.assertEqual(changed['status'], 'never')
+        with self.assertRaisesRegex(ValueError, 'Scan this location'):
+            self.service._card(self.ids[0])
+        self.scan(0)
+        cards = self.service.db.rows('SELECT * FROM cards WHERE location_id=? AND present=1', (location['id'],))
+        self.assertEqual({c['filename'] for c in cards}, {'card.mcr','pcsx-card1.mcd'})
+        self.assertEqual(self.save(0)['id'], save['id'])
+        self.assertEqual(self.save(0)['sha256'], save['sha256'])
+        self.assertEqual(self.cards[0].read_bytes(), before)
+        status, changed = self.request(url, {'suffix':'.mcd'}, 'PUT')
+        self.assertEqual(status, 200, changed)
+        self.scan(0)
+        self.assertEqual(self.service.db.one('SELECT present FROM cards WHERE id=?', (self.ids[0],))['present'], 0)
+        self.assertEqual(self.service.db.one('SELECT sha256 FROM saves WHERE id=?', (save['id'],))['sha256'], save['sha256'])
+
     def test_backend_is_part_of_location_identity(self):
         with self.assertRaisesRegex(ValueError,'new location'):
             self.service.save_location(self.devices[0],{'backend':'ps2','suffix':'.ps2'},self.locations[0]['id'])
@@ -141,6 +168,39 @@ class PS1WebTest(unittest.TestCase):
         self.assertEqual(self.service.db.one('SELECT count(*) n FROM save_versions WHERE save_id IN (SELECT id FROM saves WHERE card_id=?)', (self.ids[1],))['n'], 1)
         with self.service.db.connect() as db:
             self.assertFalse(db.execute('PRAGMA foreign_key_check').fetchall())
+
+    def test_remove_device_preserves_library_and_files_and_rejects_reuse(self):
+        device_id = self.devices[0]
+        self.service.update_device(device_id, {'poll_seconds':300})
+        extra = self.service.save_location(device_id, dict(name='Extra',path='extra',backend='ps1',suffix='*'))
+        group = self.service.sync.configure({'directory':'SAME','card_ids':self.ids[:2]})
+        status, preview = self.request('/api/transfers/preview', {'save_id':self.save(0)['id'],'destination_card_id':self.ids[1]})
+        self.assertEqual(status,201,preview)
+        before = [p.read_bytes() for p in self.cards]
+        with self.service.db.connect() as db:
+            versions = [tuple(row) for row in db.execute('SELECT * FROM library_versions ORDER BY id')]
+        job = self.service.queue_scan(device_id)
+        route = f'/api/devices/{device_id}'
+        self.assertEqual(self.request(route,{},'DELETE')[0],200)
+        inventory = self.service.inventory()
+        self.assertNotIn(device_id,[d['id'] for d in inventory['devices']])
+        self.assertFalse(any(l['device_id']==device_id for l in inventory['locations']))
+        self.assertNotIn(self.ids[0],[c['id'] for c in inventory['cards']])
+        self.assertEqual(self.service.db.one('SELECT deleted FROM locations WHERE id=?',(extra['id'],))['deleted'],1)
+        self.assertEqual([p.read_bytes() for p in self.cards],before)
+        self.assertEqual(self.service.db.one('SELECT status FROM transfers WHERE id=?',(preview['id'],))['status'],'cancelled')
+        self.assertFalse(self.service.sync.group(group['id'])['enabled'])
+        self.service.enqueue_due(at=10**12)
+        self.assertEqual(self.service.db.one('SELECT status FROM jobs WHERE id=?',(job['id'],))['status'],'cancelled')
+        with self.service.db.connect() as db:
+            self.assertEqual([tuple(row) for row in db.execute('SELECT * FROM library_versions ORDER BY id')],versions)
+            self.assertFalse(db.execute('PRAGMA foreign_key_check').fetchall())
+        self.assertEqual(self.request(route,{},'DELETE')[0],404)
+        self.assertEqual(self.request(route,{'name':'Reuse'},'PUT')[0],404)
+        self.assertEqual(self.request(route+'/scan',{})[0],404)
+        self.assertEqual(self.request(route+'/locations',dict(name='Reuse',path='extra'))[0],404)
+        empty = self.service.create_device(dict(name='Empty',root_path=str(self.cards[0].parent)))
+        self.assertEqual(self.request(f"/api/devices/{empty['id']}",{},'DELETE')[0],200)
 
     def test_remove_last_location_cancels_queued_scan_and_stops_polling(self):
         job = self.service.queue_scan(self.devices[0])

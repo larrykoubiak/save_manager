@@ -5,6 +5,8 @@ from pathlib import Path
 import os
 import sqlite3
 
+from .library import SCHEMA as LIBRARY_SCHEMA, regroup_games
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS devices (
@@ -14,7 +16,8 @@ CREATE TABLE IF NOT EXISTS devices (
     ftp_port INTEGER NOT NULL DEFAULT 21, ftp_username TEXT NOT NULL DEFAULT 'anonymous',
     ftp_password TEXT NOT NULL DEFAULT '',
     poll_seconds INTEGER NOT NULL DEFAULT 0, last_checked TEXT, last_seen TEXT,
-    status TEXT NOT NULL DEFAULT 'never', error TEXT, next_poll REAL NOT NULL DEFAULT 0
+    status TEXT NOT NULL DEFAULT 'never', error TEXT, next_poll REAL NOT NULL DEFAULT 0,
+    deleted INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS locations (
     id INTEGER PRIMARY KEY, device_id INTEGER NOT NULL REFERENCES devices(id),
@@ -94,10 +97,10 @@ class Database:
         self.path.chmod(0o600)
         with self.connect() as db:
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 10:
+            if version > 16:
                 raise ValueError('This database requires a newer Save Manager.')
             db.execute('PRAGMA journal_mode=WAL')
-            db.executescript(SCHEMA)
+            db.executescript(SCHEMA + LIBRARY_SCHEMA)
             if 'icon_hash' not in {row[1] for row in db.execute('PRAGMA table_info(saves)')}:
                 db.execute('ALTER TABLE saves ADD COLUMN icon_hash TEXT')
             columns = {row[1] for row in db.execute('PRAGMA table_info(transfers)')}
@@ -166,7 +169,7 @@ class Database:
                                                (Path(row['path']).relative_to(root).as_posix(), row['id']))
                         db.execute('DROP TABLE locations')
                         db.execute('ALTER TABLE locations_new RENAME TO locations')
-                        db.execute('CREATE UNIQUE INDEX active_location_path ON locations(device_id,path) WHERE deleted=0')
+                        db.execute('CREATE UNIQUE INDEX active_location_path ON locations(device_id,path,backend) WHERE deleted=0')
                         db.execute('PRAGMA user_version=9')
                 finally:
                     db.execute('PRAGMA foreign_keys=ON')
@@ -174,6 +177,7 @@ class Database:
                     raise ValueError('Device-root migration failed its foreign-key check.')
             columns = {row[1] for row in db.execute('PRAGMA table_info(devices)')}
             for name, definition in (
+                ('deleted', 'INTEGER NOT NULL DEFAULT 0'),
                 ('transport', "TEXT NOT NULL DEFAULT 'filesystem'"),
                 ('ftp_host', "TEXT NOT NULL DEFAULT ''"),
                 ('ftp_port', 'INTEGER NOT NULL DEFAULT 21'),
@@ -181,7 +185,18 @@ class Database:
                 ('ftp_password', "TEXT NOT NULL DEFAULT ''")):
                 if name not in columns:
                     db.execute(f'ALTER TABLE devices ADD COLUMN {name} {definition}')
-            db.execute('PRAGMA user_version=10')
+            columns = {row[1] for row in db.execute('PRAGMA table_info(library_games)')}
+            for name, definition in (
+                ('card_ports', "TEXT NOT NULL DEFAULT 'unknown'"),
+                ('card_port_note', "TEXT NOT NULL DEFAULT ''")):
+                if name not in columns:
+                    db.execute(f'ALTER TABLE library_games ADD COLUMN {name} {definition}')
+            if version < 13:
+                db.execute('DROP INDEX IF EXISTS active_location_path')
+                db.execute('CREATE UNIQUE INDEX active_location_path ON locations(device_id,path,backend) WHERE deleted=0')
+            if version < 14:
+                regroup_games(db)
+            db.execute('PRAGMA user_version=16')
 
     @contextmanager
     def connect(self):

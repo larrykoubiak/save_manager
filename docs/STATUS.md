@@ -7,6 +7,8 @@ preserved. The Tk proof of concept has been removed.
 
 Available features:
 
+- Device-independent save library grouped by platform and game serial, with a flat list of distinct saves.
+- Content-addressed local save storage, configurable version retention (two previous versions by default), downloads and library version selection.
 - Named devices with root folders and relative locations per system, manual or scheduled scans.
 - Last-known offline inventory and content/version observations.
 - Device-column comparison table, PS2-inspired theme and animated save icons.

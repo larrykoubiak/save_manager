@@ -51,6 +51,20 @@ def decode(data, common=False):
 
 
 class SteambotChroniclesUS:
+    @classmethod
+    def library_slots(cls, bundle):
+        from ..library import LibrarySlot
+        data = bundle.file_data()
+        result = []
+        for info in cls.slots(bundle.save_id, data):
+            if info['state'] != 'occupied':
+                continue
+            number = info['number']
+            payload = data[f'FILE_{number-1:02}']
+            ticks = struct.unpack_from('<i', decode(payload), 0x402c)[0]
+            result.append(LibrarySlot(str(number), number, info['label'], {'data': payload}, min(ticks,0x66ff2ff)//30))
+        return result
+
     name = 'Steambot Chronicles (US PS2)'
     slot_count = SLOT_COUNT
 

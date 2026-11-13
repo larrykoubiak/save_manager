@@ -95,11 +95,26 @@ class Application:
             key = path[len('/api/icons/'):-4]
             animated = parse_qs(environ.get('QUERY_STRING', '')).get('static') != ['1']
             return 200, self.icons.get(key, animated), 'image/gif', [('Cache-Control', 'private, max-age=3600')]
+        if path == '/api/library' and method == 'GET':
+            return response(200, self.service.library.inventory())
+        if path == '/api/library/settings' and method == 'PUT':
+            return response(200, self.service.library.settings(body))
+        library_parts = path.strip('/').split('/')
+        if len(library_parts)==4 and library_parts[:3]==['api','library','games'] and method=='PUT':
+            return response(200,self.service.library.game_settings(int(library_parts[3]),body))
+        if len(library_parts)==5 and library_parts[:3]==['api','library','versions'] and library_parts[4]=='download' and method=='GET':
+            version_id = int(library_parts[3])
+            payload = self.service.library.download(version_id)
+            return 200, payload, 'application/zip', [('Content-Disposition',f'attachment; filename="save-version-{version_id}.zip"')]
+        if len(library_parts)==5 and library_parts[:3]==['api','library','slots'] and library_parts[4]=='restore' and method=='POST':
+            return response(200,self.service.library.restore(int(library_parts[3]),body))
         if path == '/api/devices' and method == 'POST':
             return response(201, self.service.create_device(body))
         parts = path.strip('/').split('/')
         if len(parts) >= 3 and parts[:2] == ['api', 'devices']:
             device_id = int(parts[2])
+            if len(parts) == 3 and method == 'DELETE':
+                return response(200, self.service.delete_device(device_id))
             if len(parts) == 3 and method == 'PUT':
                 return response(200, self.service.update_device(device_id, body))
             if len(parts) == 4 and parts[3] == 'locations' and method == 'POST':

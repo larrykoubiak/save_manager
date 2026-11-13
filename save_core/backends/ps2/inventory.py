@@ -5,7 +5,8 @@ import hashlib
 from .scanner import scan
 from game_plugins import plugin_for, slot_data
 from save_core.save_copy import image_file
-from .operations import tree_snapshot
+from .operations import tree_snapshot, simple_save
+from .bundles import from_native
 from save_core.save_merge import digest, stable_read
 from .native.ps2mc import ps2mc
 from .native.ps2iconsys import IconSys
@@ -17,7 +18,8 @@ from save_core.storage_paths import location_root, card_path
 def snapshot_location(location):
     root = location_root(location)
     suffix = location['suffix']
-    suffixes = ('.ps2', '.bin') if suffix == '*' else (suffix,)
+    from . import PS2Backend
+    suffixes = PS2Backend.suffixes if suffix == '*' else (suffix,)
     paths = sorted(p for p in root.iterdir() if p.suffix.lower() in suffixes and p.is_file())
     if not paths:
         # Empty, reachable folders are valid inventories, unlike offline folders.
@@ -51,6 +53,11 @@ def snapshot_location(location):
                 card = ps2mc(image)
                 try:
                     tree = tree_snapshot(card)
+                    for record in card_records:
+                        try:
+                            record['bundle'] = from_native(simple_save(card,record['save']))
+                        except ValueError as error:
+                            record['library_error'] = str(error)
                 finally:
                     card.close()
             for record in card_records:

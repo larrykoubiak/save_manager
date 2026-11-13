@@ -15,6 +15,93 @@ string fields, and notes for inspection. Plugins have no card-writing API.
 adds generic source and file information. Unsupported games still show that
 generic information.
 
+## Save library extraction
+
+Plugins may implement `library_slots(bundle)` returning `LibrarySlot` records
+from `game_plugins/library.py`: stable slot key/number, label, isolated files
+and optional integer playtime in seconds. `library_family` groups numbered
+save files belonging to the same compatible game edition. The library retains
+the full original `SaveBundle` with each version for backend metadata and
+shared settings. Unsupported games remain whole-save entries.
+
+New internal-slot plugins also index retained whole-save library bundles,
+including offline sources. Original versions stay available for download;
+the library lists their extracted progress instead of duplicate whole backups.
+
+## Numbered PS1 saves
+
+The numbered PS1 game modules share `ps1/numbered.py`: validation,
+playtime formatting, library extraction and byte-only slot renumbering. Each
+game supplies a `NumberedSaveLayout` with filename suffixes, header, checksum,
+playtime and title fields, plus optional progress decoding and extra validation.
+Game modules retain their checksum algorithms and format references. Library
+keys and backend metadata are preserved. Games with internal slots or several
+payload files keep their own implementations.
+
+The additional US layouts below were verified against eight distinct private
+library saves, including all 15 renumbered destinations for each sample. These
+checks use private snapshots; live cards were not modified. In-game testing of
+renumbered copies remains outstanding.
+
+| Game | Filename suffixes | Integrity / slot index | Playtime |
+| --- | --- | --- | --- |
+| FFT | `A`–`O` | MSB-first parity bits at `0x118`, blocks 3–59; index `0x100` | Seconds at `0x120` |
+| SaGa Frontier 2 | `0`–`9`, `A`–`E` | Byte sum of `0x180..0x1fff` excluding stored sum `0x181` | 60 Hz ticks at `0x544` |
+| Tomba! | `00`–`14` | XOR `0x200..0xbfe`, stored `0xbff`; index `0x217` | 60 Hz ticks at `0x208` |
+| Xenogears | ASCII `0`–`>` | Byte sum `0x100..0x1ffe`, stored `0x1fff`; index `0x123` | 60 Hz ticks at `0x100` |
+
+Each retains its existing `whole` library key. Tomba's native title is zero-based;
+the UI consistently uses positions 1–15. Xenogears' last five filename characters
+are deliberately `:;<=>`, not decimal numbers. These are names inside a card,
+not host filesystem paths. MGS has its own named-save adapter below.
+
+References: [FFT save format](https://github.com/adamrt/fft_decomp/blob/master/include/fft/save.h)
+and [save/load parity handling](https://github.com/adamrt/fft_decomp/blob/master/src/world/card_save.c);
+[Tomba game state](https://github.com/hansbonini/psx_tomba/blob/main/include/game/state.h),
+cross-checked with private US `DSPSUB2.BIN` save/load routines at `800e954c` and
+`800e9c54`; [Xenogears save/load routines](https://github.com/brianblakely/xenogears-ex-machina/blob/master/src/decomp/src/slot39/menu_framework.c).
+SaGa Frontier 2 was checked against private `SLUS_009.33` checksum/load routines
+at `8005d69c`/`8005d6d8` and its save builder at `8005e19c`. The preview copier
+`8005dd6c` and renderer `8005e734` verify the 60 Hz timer at `0x544`, year
+at `0x574`, location/scenario text at `0x184`, and leader text at `0x558`.
+The two private samples show `1220 / Gustave Born / Gustave / 0:03:17` and
+`1235 / Westia / Wil Knights / 0:39:52`. Only known Latin glyphs are decoded;
+unrecognized glyphs display `?` and stored bytes are never changed.
+
+## Metal Gear Solid (US PS1)
+
+`ps1/mgs.py` recognizes US story saves (`BASLUS-00594G...`). Each one-block
+file contains three identical `0xa40`-byte snapshots at `0x100`, `0xb40` and
+`0x1580`. Each snapshot has a CRC32 over its bytes `[8,0xa40)` and verified
+layout versions `0x5f`/`0x60`. All three copies must agree and pass their CRCs.
+The 60 Hz timer is at `0x110`, difficulty at `0x142`, disc at `0x148`; the
+browser title supplies the location, with the stage code as a fallback.
+
+Filename characters encode time, difficulty, run/disc flags, save type and a
+final collision letter `A`–`P`. “Keep both” uses the game's first-free-letter
+search, changing only that final letter. It preserves the full payload, title
+and backend metadata. There is no artificial numbered-slot menu. The existing
+`whole` library key and history are retained. VR training, photos and other
+regions are outside this adapter; recovery of disagreeing snapshots is not
+performed. Three private samples passed validation and filename-copy checks;
+in-game validation of renamed copies remains outstanding.
+
+References: [MGS snapshot layout/CRC](https://github.com/FoxdieTeam/mgs_reversing/blob/master/source/libgcl/variable.c),
+[filename generation and repeated snapshots](https://github.com/FoxdieTeam/mgs_reversing/blob/master/source/menu/datasave.c),
+[clock updates](https://github.com/FoxdieTeam/mgs_reversing/blob/master/source/game/gamed.c).
+
+## Tales of Phantasia (translated PS1)
+
+`ps1/tales_of_phantasia.py` supports the Absolute Zero v1.0 layout checked
+against three private saves and the translated executable. Files
+`BISLPSP01770.TOP.A` through `O` are 15 numbered, one-block saves. Playtime
+is a 60 Hz counter at `0x11cc`, mirrored at `0x508`. Renumbering edits only
+the filename, four title bytes at `0x32`, and the byte-sum checksum over
+`[0,0x1ffc)` stored as a little-endian u32 at `0x1ffc`. Existing library
+entries retain their identity and history. Other translations are unverified;
+in-game validation of renumbered copies remains outstanding. Private saves
+and executable bytes are excluded from the repository.
+
 ## Chrono Cross (US PS1)
 
 `ps1/chrono_cross.py` recognizes `BASLUSP01041USCHRO00` through `14`: 15

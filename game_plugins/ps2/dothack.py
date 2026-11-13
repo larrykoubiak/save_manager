@@ -15,6 +15,20 @@ INDEX_SIZE = 28
 
 
 class DotHackInfectionUS:
+    @classmethod
+    def library_slots(cls, bundle):
+        from ..library import LibrarySlot
+        data = bundle.file_data()
+        result = []
+        for info in cls.slots(bundle.save_id, data):
+            if info['state'] != 'occupied':
+                continue
+            number = info['number']
+            record = data[bundle.save_id][(number-1)*INDEX_SIZE:number*INDEX_SIZE]
+            result.append(LibrarySlot(str(number), number, info['label'],
+                          {'index': record, 'data': data[f'dhdata{number:02}']}, struct.unpack_from('<i', record, 24)[0]//60))
+        return result
+
     name = '.hack//Infection (US PS2)'
     slot_count = SLOT_COUNT
 

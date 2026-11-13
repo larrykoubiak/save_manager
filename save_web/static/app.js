@@ -8,7 +8,8 @@ let renderedLibrary = '';
 let selectedSourceSlot = null;
 let deletingSave = false;
 let librarySort = 'name-asc';
-let activeSystem = 'ps2', activeView = 'library';
+let activeSystem = 'ps2', activeView = 'saves';
+let renderedSavedLibrary = '';
 const systemState = new Map();
 
 async function api(path, body, method='POST') {
@@ -49,15 +50,15 @@ function renderSlots(save) {
 }
 function systems() { return data.backends?.length ? data.backends : [{id:'ps2',name:'PS2'},{id:'ps1',name:'PS1'}]; }
 function systemName(system=activeSystem) { return systems().find(s => s.id === system)?.name || system.toUpperCase(); }
-function scopedView() { return ['library','sync'].includes(activeView); }
+function scopedView() { return ['saves','library','sync'].includes(activeView); }
 function systemLocations(system=activeSystem) { return data.locations.filter(l => l.backend === system); }
 function systemDevices() { const ids = new Set(systemLocations().map(l => l.device_id)); return data.devices.filter(d => ids.has(d.id)); }
 function applyRoute() {
-  const match = location.hash.match(/^#\/systems\/([^/]+)\/(library|sync)$/);
-  let system = activeSystem, view = 'library';
+  const match = location.hash.match(/^#\/systems\/([^/]+)\/(saves|library|sync)$/);
+  let system = activeSystem, view = 'saves';
   if (match && systems().some(s => s.id === match[1])) { system = match[1]; view = match[2]; }
   else if (['#/devices','#/activity'].includes(location.hash)) view = location.hash.slice(2);
-  else history.replaceState(null,'',`#/systems/${activeSystem}/library`);
+  else history.replaceState(null,'',`#/systems/${activeSystem}/saves`);
   if (system !== activeSystem) {
     systemState.set(activeSystem,{search:$('#search').value,sort:librarySort});
     const state = systemState.get(system);
@@ -66,21 +67,61 @@ function applyRoute() {
   activeSystem = system; activeView = view;
 }
 function switchView(view,system=activeSystem) {
-  const hash = ['library','sync'].includes(view) ? `#/systems/${system}/${view}` : `#/${view}`;
+  const hash = ['saves','library','sync'].includes(view) ? `#/systems/${system}/${view}` : `#/${view}`;
   if (location.hash !== hash) history.pushState(null,'',hash);
   applyRoute(); render();
 }
 function renderNavigation() {
-  for (const name of ['devices','library','activity','sync']) $(`#${name}-view`).hidden = name !== activeView;
+  for (const name of ['devices','saves','library','activity','sync']) $(`#${name}-view`).hidden = name !== activeView;
   document.querySelectorAll('.nav').forEach(button => button.classList.toggle('active', button.dataset.view === activeView));
   const name = systemName();
-  $('#page-title').textContent = {devices:'Devices',library:`${name} Memory Card Browser`,activity:'Activity',sync:`${name} Automatic Sync`}[activeView];
-  $('#page-description').textContent = {devices:'Shared devices, their systems, locations and scan schedules.',library:`${name} saves and sources. One column per device.`,activity:'Scans, transfers and backups across all systems.',sync:`Selected ${name} saves, queued updates and conflicts.`}[activeView];
+  $('#page-title').textContent = {devices:'Devices',saves:`${name} Save Library`,library:`${name} Memory Card Browser`,activity:'Activity',sync:`${name} Automatic Sync`}[activeView];
+  $('#page-description').textContent = {saves:`Your ${name} games and save slots, stored independently of memory cards.`,devices:'Shared devices, their systems, locations and scan schedules.',library:`${name} saves and sources. One column per device.`,activity:'Scans, transfers and backups across all systems.',sync:`Selected ${name} saves, queued updates and conflicts.`}[activeView];
   $('#system-nav').innerHTML = systems().map(system => {
-    const count = new Set(currentSaves().filter(s => saveBackend(s) === system.id).map(s => s.directory)).size;
+    const count = activeView === 'saves' ? (data.library?.games || []).filter(game => game.backend === system.id).length : new Set(currentSaves().filter(s => saveBackend(s) === system.id).map(s => s.directory)).size;
     const selected = scopedView() && activeSystem === system.id;
-    return `<a href="#/systems/${h(system.id)}/${activeView === 'sync'?'sync':'library'}" data-system="${h(system.id)}" class="system-tab ${selected?'active':''}" ${selected?'aria-current="page"':''}>${h(system.name)} <span class="count">${count}</span></a>`;
+    return `<a href="#/systems/${h(system.id)}/${['saves','sync'].includes(activeView)?activeView:'library'}" data-system="${h(system.id)}" class="system-tab ${selected?'active':''}" ${selected?'aria-current="page"':''}>${h(system.name)} <span class="count">${count}</span></a>`;
   }).join('');
+}
+function playtime(seconds) {
+  if (seconds === null || seconds === undefined) return 'Unknown';
+  const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds / 60) % 60;
+  return `${hours}:${String(minutes).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`;
+}
+function cardPortLabel(ports) { return {port1:'Port 1 only',both:'Both ports',unknown:'Unknown'}[ports] || 'Unknown'; }
+function openGameSettings(id) {
+  const game = data.library.games.find(game => game.id === id);
+  if (!game) throw new Error('Game not found. Refresh the library.');
+  const form = $('#game-settings-form');
+  form.dataset.id = id; form.querySelector('.form-error').textContent = '';
+  form.elements.card_ports.value = game.card_ports || 'unknown';
+  form.elements.card_port_note.value = game.card_port_note || '';
+  $('#game-settings-title').textContent = game.serial ? `${game.title} · ${game.serial}` : game.title;
+  $('#game-settings-dialog').showModal();
+}
+function renderSavedLibrary() {
+  const library = data.library || {games:[],errors:[],previous_versions:2};
+  const errors = library.errors.filter(error => error.backend === activeSystem);
+  const search = $('#saved-search').value.trim().toLowerCase();
+  const games = library.games.filter(game => game.backend === activeSystem && (!search || JSON.stringify(game).toLowerCase().includes(search)));
+  const count = games.reduce((total,game) => total + game.saves.length,0);
+  $('#saved-count').textContent = `${games.length} game${games.length === 1?'':'s'} · ${count} save${count === 1?'':'s'}`;
+  const input = $('#library-settings-form').elements.previous_versions;
+  if (document.activeElement !== input) input.value = library.previous_versions;
+  const signature = JSON.stringify([activeSystem,games,errors,search]);
+  if (signature === renderedSavedLibrary) return;
+  const expanded = new Set([...$('#saved-library').querySelectorAll('details[open][data-library-key]')].map(node => node.dataset.libraryKey));
+  $('#saved-library').innerHTML = games.map(game => `<details class="saved-game" data-library-key="game-${game.id}" ${expanded.has(`game-${game.id}`)?'open':''}>
+    <summary>${game.icon_hash?`<img class="saved-icon" src="/api/icons/${h(game.icon_hash)}.gif" alt="" loading="lazy">`:''}<strong>${h(game.title)}</strong>${game.serial?`<code class="game-serial">${h(game.serial)}</code>`:''}<span class="hint">${game.saves.length} distinct save${game.saves.length === 1?'':'s'}</span></summary>
+    <div class="game-card-ports"><span>Memory-card ports: <strong>${h(cardPortLabel(game.card_ports))}</strong></span> <button data-action="game-settings" data-id="${game.id}">Game settings</button>${game.card_port_note?`<p class="game-port-note">${h(game.card_port_note)}</p>`:''}</div>
+    <div class="table-wrap"><table class="matrix saved-table"><thead><tr><th>Save</th><th>Playtime</th><th>Sources</th><th>Actions</th></tr></thead><tbody>${game.saves.map(save => {
+      const sources = save.sources;
+      return `<tr data-library-save="${h(save.content_hash)}" data-library-version="${save.id}"><td>${h(save.label)}<small><code>${h(save.content_hash.slice(0,8))}</code> · Imported ${h(when(save.created))}</small></td><td>${h(playtime(save.playtime_seconds))}</td>
+      <td>${sources.length?sources.map(source => `<div>${h(source.device)}<small>${h(source.filename)}${source.original_slot === null?'':` · Original slot ${source.original_slot}`} · ${source.deleted?'Removed source':!source.present?'Save absent':source.available?'Available':'Offline'}</small></div>`).join(''):`<div>${h(save.device)}<small>${h(save.filename)} · Retained copy${save.original_slots.length?` · Original slot ${h(save.original_slots.join(', '))}`:''}</small></div>`}</td>
+      <td><a href="/api/library/versions/${save.id}/download" download>Download</a></td></tr>`;
+    }).join('')}</tbody></table></div></details>`).join('') || `<div class="empty">No ${h(systemName())} saves stored yet. Scan a device from Cards or Devices to collect its saves.</div>`;
+  $('#library-errors').innerHTML = errors.length ? `<details class="library-errors"><summary>${errors.length} save import issue${errors.length === 1?'':'s'}</summary>${errors.map(error => `<p>${h(error.device)} · ${h(error.filename)} · ${h(error.directory)}<br><span class="error-text">${h(error.error)}</span></p>`).join('')}</details>` : '';
+  renderedSavedLibrary = signature;
 }
 function locationStatus(locations) {
   if (!locations.length) return 'never';
@@ -102,7 +143,7 @@ function noDevices() {
   return '<div class="empty">No devices configured. <button data-action="add-device">Add your first device</button></div>';
 }
 function render() {
-  renderNavigation(); renderSystemSources();
+  renderNavigation(); renderSystemSources(); renderSavedLibrary();
   $('#device-count').textContent = data.devices.length;
   const cards = data.cards.filter(c => c.present), saves = currentSaves();
   const rows = [
@@ -151,7 +192,7 @@ function locationList(deviceId,system=null) {
 function renderManage() {
   const device = data.devices.find(d => d.id === managedDevice);
   $('#manage-title').textContent = device.name;
-  $('#manage-content').innerHTML = `<p class="hint">${h(device.kind)} · ${h(schedule(device.poll_seconds))} · Last seen ${h(when(device.last_seen))}</p><div class="table-actions"><button data-action="edit-device" data-id="${device.id}">Device settings</button><button data-action="cards" data-id="${device.id}">View cards</button><button data-action="add-location" data-id="${device.id}">Add location</button></div><h3>Locations</h3>${locationList(device.id,scopedView()?activeSystem:null)}`;
+  $('#manage-content').innerHTML = `<p class="hint">${h(device.kind)} · ${h(schedule(device.poll_seconds))} · Last seen ${h(when(device.last_seen))}</p><div class="table-actions"><button data-action="edit-device" data-id="${device.id}">Device settings</button><button class="danger" data-action="delete-device" data-id="${device.id}">Remove device…</button><button data-action="cards" data-id="${device.id}">View cards</button><button data-action="add-location" data-id="${device.id}">Add location</button></div><h3>Locations</h3>${locationList(device.id,scopedView()?activeSystem:null)}`;
 }
 function sizeText(blocks) { return Number.isInteger(blocks) ? `${blocks.toLocaleString()} KiB` : '—'; }
 function saveSizes(saves) { return saves.map(s => s.size_blocks).filter(Number.isInteger); }
@@ -297,7 +338,7 @@ function updateDeviceConnection(defaults=false) {
 function updateLocationFormats() {
   const form = $('#location-form'), backend = form.elements.backend.value;
   const info = (data.backends || []).find(b => b.id === backend);
-  const suffixes = info?.suffixes || (backend === 'ps1' ? ['.mcr','.mcd','.srm','.bin','.mem','.vm1','.vmc','.vmp'] : ['.ps2','.bin']);
+  const suffixes = info?.suffixes || (backend === 'ps1' ? ['.mcr','.mcd','.srm','.bin','.mem','.vm1','.vmc','.vmp'] : ['.ps2','.bin','.vm2']);
   form.elements.suffix.innerHTML = '<option value="*">All supported card files</option>' + suffixes.map(s => `<option value="${h(s)}">${h(s)} images</option>`).join('');
   form.elements.suffix.value = backend === 'ps2' ? '.ps2' : '*';
   updateLocationAccess();
@@ -330,7 +371,8 @@ function openLocation(deviceId, id) {
   form.elements.backend.innerHTML = systems().map(system => `<option value="${h(system.id)}">${h(system.name)}</option>`).join('');
   form.elements.backend.value = location?.backend || activeSystem;
   updateLocationFormats();
-  for (const name of ['path','suffix']) form.elements[name].disabled = Boolean(location);
+  form.elements.path.disabled = Boolean(location);
+  form.elements.suffix.disabled = false;
   form.elements.backend.disabled = Boolean(location) || scopedView();
   if (location) {
     for (const name of ['name','path','suffix','marker']) form.elements[name].value = location[name];
@@ -439,7 +481,7 @@ function openTransfer(id, slotNumber=null, deleting=false) {
   form.elements.conflict.innerHTML = isSlot
     ? '<option value="stop">Stop if the destination slot is occupied</option><option value="replace">Replace the selected destination slot</option>'
     : '<option value="stop">Stop and ask me</option><option value="keep_both">Keep both (supported games)</option><option value="replace">Replace destination save</option>';
-  if (!isSlot && backendOf(card) === 'ps1' && !selectedSave.card_slots) form.elements.conflict.querySelector('[value="keep_both"]').remove();
+  if (!isSlot && backendOf(card) === 'ps1' && !selectedSave.can_keep_both) form.elements.conflict.querySelector('[value="keep_both"]').remove();
   const deviceIds = new Set(destinations.map(card => deviceOf(card)?.id));
   const devices = data.devices.filter(device => deviceIds.has(device.id));
   form.elements.destination_device_id.innerHTML = '<option value="">Choose a device…</option>' + devices.map(device => `<option value="${device.id}">${h(device.name)}</option>`).join('');
@@ -484,6 +526,15 @@ $('#location-form').addEventListener('submit', event => {
     body.writable = form.elements.writable.checked;
     await api(`devices/${deviceId}/locations${id?`/${id}`:''}`,body,id?'PUT':'POST');
     $('#location-dialog').close(); await refresh(); notice('Location saved. Scan the device to discover its cards.');
+  });
+});
+$('#delete-device-form').addEventListener('submit', event => {
+  event.preventDefault(); const form = event.currentTarget;
+  formSubmit(form, async () => {
+    await api(`devices/${form.dataset.id}`,{},'DELETE');
+    $('#delete-device-dialog').close();
+    if (managedDevice === Number(form.dataset.id)) $('#manage-dialog').close();
+    await refresh(); notice('Device removed. Library saves, files, backups, and history were kept.');
   });
 });
 $('#delete-location-form').addEventListener('submit', event => {
@@ -547,14 +598,22 @@ $('#transfer-dialog').addEventListener('close', () => {
 document.addEventListener('click', async event => {
   const close = event.target.closest('[data-close]');
   if (close) { if (!transferBusy) close.closest('dialog').close(); return; }
-  const system = event.target.closest('[data-system]'); if (system) { event.preventDefault(); system.closest('dialog')?.close(); switchView(activeView === 'sync'?'sync':'library',system.dataset.system); return; }
+  const system = event.target.closest('[data-system]'); if (system) { event.preventDefault(); system.closest('dialog')?.close(); switchView(['saves','sync'].includes(activeView)?activeView:'library',system.dataset.system); return; }
   const nav = event.target.closest('[data-view]'); if (nav) { switchView(nav.dataset.view); return; }
   const button = event.target.closest('[data-action]'); if (!button) return;
   const id = Number(button.dataset.id);
   try {
     switch (button.dataset.action) {
+      case 'game-settings': openGameSettings(id); break;
+      case 'restore-library': await api(`library/slots/${id}/restore`,{version_id:Number(button.dataset.version)}); await refresh(); notice('Library version selected.'); break;
       case 'add-device': openDevice(); break;
       case 'edit-device': openDevice(id); break;
+      case 'delete-device': {
+        const form = $('#delete-device-form'); form.dataset.id = id;
+        form.querySelector('.form-error').textContent = '';
+        $('#delete-device-summary').textContent = data.devices.find(d => d.id === id).name;
+        $('#delete-device-dialog').showModal(); break;
+      }
       case 'manage-device': managedDevice = id; renderManage(); $('#manage-dialog').showModal(); break;
       case 'add-location': openLocation(id); break;
       case 'add-system-location': openLocation(); break;
@@ -594,3 +653,20 @@ $('#animate-icons').checked = !matchMedia('(prefers-reduced-motion: reduce)').ma
 $('#animate-icons').addEventListener('change', renderLibrary);
 refresh().catch(error => notice(`Could not load the library: ${error.message}`,true));
 setInterval(() => { if (!document.hidden) refresh().catch(error => notice(`Connection interrupted: ${error.message}`,true)); }, 4000);
+
+$('#saved-search').addEventListener('input',renderSavedLibrary);
+$('#library-settings-form').addEventListener('submit',event => {
+  event.preventDefault(); const form = event.currentTarget;
+  formSubmit(form,async () => {
+    await api('library/settings',{previous_versions:Number(form.elements.previous_versions.value)},'PUT');
+    await refresh(); notice('Library history settings saved.');
+  });
+});
+
+$('#game-settings-form').addEventListener('submit',event => {
+  event.preventDefault(); const form = event.currentTarget;
+  formSubmit(form,async () => {
+    await api(`library/games/${form.dataset.id}`,{card_ports:form.elements.card_ports.value,card_port_note:form.elements.card_port_note.value},'PUT');
+    $('#game-settings-dialog').close(); await refresh(); notice('Game settings saved.');
+  });
+});

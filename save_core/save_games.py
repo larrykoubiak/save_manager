@@ -4,15 +4,19 @@ from pathlib import Path
 import re
 
 
-SERIAL = re.compile(r'(S[A-Z]{3})[-_]?(\d{3})[._-]?(\d{2})', re.IGNORECASE)
+SERIAL = re.compile(r'(S[A-Z]{3})[-_P]?(\d{3})[._-]?(\d{2})', re.IGNORECASE)
 
 
-def game_id(name):
+def game_serial(name):
     match = SERIAL.search(name)
     if match:
         return match[1].upper() + '-' + match[2] + match[3]
+    return None
+
+
+def game_id(name):
     # Never merge unrelated entries just because their serial is unknown.
-    return name
+    return game_serial(name) or name
 
 
 def disc_titles(vmc_dir):

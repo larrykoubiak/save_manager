@@ -118,6 +118,24 @@ class FTPTest(unittest.TestCase):
                 ftp_source_file(device, self.location, filename, expected, cache)
         self.assertFalse([path for path in cache.rglob('*') if path.is_file()])
 
+    def test_ps3_vm1_vm2_ftp_sources_share_remote_folder(self):
+        from test_save_merge import card_file
+        from test_save_copy import generic_save
+        ps2 = self.root/'PS2MEMCARD.VM2'
+        card_file(ps2,[generic_save('PS2SAVE',b'PS3 virtual card')],True)
+        self.state['files']['/PSP/SAVEDATA/PS2MEMCARD.VM2']=ps2.read_bytes()
+        self.state['files']['/PSP/SAVEDATA/PS1MEMCARD.VM1']=fixture([('PS1SAVE',(3,),payload())])
+        self.service.save_location(self.device['id'],dict(suffix='.vm1'),self.location['id'])
+        second=self.service.save_location(self.device['id'],dict(name='PS2 cards',path='PSP/SAVEDATA',backend='ps2',suffix='.vm2'))
+        self.assertEqual(self.scan()['status'],'done')
+        cards=[c for c in self.service.inventory()['cards'] if c['location_id'] in (self.location['id'],second['id']) and c['present']]
+        self.assertEqual({c['filename'] for c in cards},{'PS1MEMCARD.VM1','PS2MEMCARD.VM2'})
+        self.assertTrue(all(c['read_only'] for c in cards))
+        games=self.service.library.inventory()['games']
+        self.assertTrue(any(g['backend']=='ps2' and g['game_key']=='PS2SAVE' for g in games))
+        self.assertEqual(self.scan()['status'],'done')
+        self.assertEqual(len(self.service.db.rows('SELECT id FROM locations WHERE device_id=? AND deleted=0',(self.device['id'],))),2)
+
     def test_credentials_hidden_and_connection_validation(self):
         self.assertNotIn('ftp_password',self.device)
         self.assertTrue(self.device['has_ftp_password'])
