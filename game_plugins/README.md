@@ -130,12 +130,16 @@ and [checksum](https://github.com/RyudoSynbios/game-tools-collection/blob/master
 `ps1/ffix.py` recognizes `BASLUS-0125100000-00` through `-14`: each numbered
 save is one 8 KiB file, not an internal slot in a larger save. It reads leader,
 level, location and 60 Hz playtime, and copies to a chosen slot from 1 to 15.
-Renumbering changes the save ID, fullwidth `FILEnn` title and CRC; all other
-payload bytes are preserved. CRC-16 uses reflected polynomial `0x8408`, seed
+Renumbering changes the save ID, fullwidth `FILEnn` title, saved menu row
+at `0x17c` when necessary, and CRC; all other payload bytes are preserved.
+The menu row must keep the restored three-row viewport within slots 1–15.
+Failing to clamp it when moving FILE02 to FILE01 makes the game render index
+255 and crash while checking the card. CRC-16 uses reflected polynomial `0x8408`, seed
 `0xffff`, no final XOR, covering bytes before the little-endian checksum at
 `0x13fe`. Both private USB samples reproduce their stored CRCs and title times.
-Other regions and rerelease formats are not supported. No live cards were
-modified during validation; in-game verification remains outstanding.
+Other regions and rerelease formats are not supported. The relocated
+6:43:11 save and all 15 destination numbers were checked by running the US
+Disc 1 Rev 1 game with PCSX-ReARMed against isolated card copies.
 
 Format references: [Memoria SaveMap](https://github.com/gjoerulv/Memoria_FF9SaveEditor/blob/main/SaveMap.cs),
 [Memoria slot-label/checksum handling](https://github.com/gjoerulv/Memoria_FF9SaveEditor/blob/main/SelectSave.cs),

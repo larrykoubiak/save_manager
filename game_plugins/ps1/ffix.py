@@ -4,6 +4,8 @@ Layout and CRC cross-checked against gjoerulv's Memoria save editor and
 nintendogamer15's FFIX Save Editor; see ../README.md for references.
 """
 
+from dataclasses import replace
+import struct
 
 from .numbered import NumberedSaveLayout, NumberedSavePlugin, fullwidth_digits
 
@@ -12,6 +14,8 @@ PREFIX = 'BASLUS-0125100000-'
 SAVE_SIZE = 8192
 CHECKSUM_OFFSET = 0x13fe
 SLOT_COUNT = 15
+MENU_ROW_OFFSET = 0x17c
+MENU_VISIBLE_ROWS = 3
 
 
 def checksum(data):
@@ -56,9 +60,30 @@ class FinalFantasyIXUS(NumberedSavePlugin):
     error_name = 'FFIX'
     library_family = PREFIX
     slot_count = SLOT_COUNT
+    relocation_offsets = (MENU_ROW_OFFSET,)
     layout = NumberedSaveLayout(
         prefix=PREFIX, suffixes=tuple(f'{n:02}' for n in range(SLOT_COUNT)),
         header=b'SC\x11\x01', size=SAVE_SIZE,
         checksum_offset=CHECKSUM_OFFSET, checksum_format='<H', checksum=checksum,
         playtime_offset=0x12c, slot_label=slot_label, progress=progress,
     )
+
+    @classmethod
+    def prepare_slot(cls, source, destination_slot):
+        copied = super().prepare_slot(source, destination_slot)
+        data = copied.files[0].data
+        # The preview stores the selected row within the three-row load menu.
+        # FFIX restores its first visible file as destination_index - row.
+        # Retaining row 1 when moving FILE02 to FILE01 underflows to 255 and
+        # the menu calls a function pointer outside its save-status table.
+        index = destination_slot - 1
+        minimum = max(0, index - (SLOT_COUNT - MENU_VISIBLE_ROWS))
+        maximum = min(MENU_VISIBLE_ROWS - 1, index)
+        row = max(minimum, min(data[MENU_ROW_OFFSET], maximum))
+        if row == data[MENU_ROW_OFFSET]:
+            return copied
+        payload = bytearray(data)
+        payload[MENU_ROW_OFFSET] = row
+        struct.pack_into('<H', payload, CHECKSUM_OFFSET, checksum(payload))
+        cls.validate_save(copied.save_id, bytes(payload))
+        return replace(copied, files=(replace(copied.files[0], data=bytes(payload)),))

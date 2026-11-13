@@ -8,6 +8,7 @@ import unittest
 from game_plugins import plugin_for
 from game_plugins.ps1.ffix import FinalFantasyIXUS as Plugin, PREFIX, CHECKSUM_OFFSET, checksum
 from save_core.backends import get_backend
+from save_core.backends.base import SaveBundle, SaveFile
 from save_core.backends.ps1.card import Card, blank_card
 from save_core.save_copy import apply_copy
 from test_ps1 import fixture, payload
@@ -32,6 +33,38 @@ def save_id(slot):
 
 
 class FFIXTest(unittest.TestCase):
+    def test_relocation_keeps_saved_menu_viewport_within_all_fifteen_positions(self):
+        # A real FILE02 save with row=1 crashed after moving to FILE01:
+        # FFIX restored first_visible = 0 - 1 and rendered save index 255.
+        data = bytearray(ffix_save(slot=2))
+        data[0x17c] = 1
+        struct.pack_into('<H',data,CHECKSUM_OFFSET,checksum(data))
+        source = SaveBundle(save_id(2),(SaveFile('data',bytes(data),b'file metadata'),),b'card metadata')
+        self.assertIs(Plugin.prepare_slot(source,2),source)
+        for destination in range(1,16):
+            with self.subTest(destination=destination):
+                result = Plugin.prepare_slot(source,destination)
+                payload = result.file_data()['data']
+                row = payload[0x17c]
+                self.assertTrue(0 <= row < 3)
+                self.assertTrue(0 <= destination - 1 - row <= 12)
+                self.assertEqual(result.metadata,source.metadata)
+                self.assertEqual(result.files[0].metadata,source.files[0].metadata)
+                allowed = {20,21,22,23,0x17c,CHECKSUM_OFFSET,CHECKSUM_OFFSET+1}
+                self.assertTrue({i for i,(a,b) in enumerate(zip(data,payload)) if a!=b} <= allowed)
+                Plugin.validate_save(result.save_id,payload)
+        self.assertEqual(source.file_data()['data'],bytes(data))
+
+    def test_same_position_repairs_previously_renumbered_menu_row(self):
+        data = bytearray(ffix_save(slot=1))
+        data[0x17c] = 1
+        struct.pack_into('<H',data,CHECKSUM_OFFSET,checksum(data))
+        bundle = SaveBundle(save_id(1),(SaveFile('data',bytes(data)),))
+        repaired = Plugin.prepare_slot(bundle,1)
+        self.assertEqual(repaired.files[0].data[0x17c],0)
+        self.assertIs(Plugin.prepare_slot(repaired,1),repaired)
+        Plugin.validate_save(save_id(1),repaired.files[0].data)
+
     def test_registry_crc_and_summary(self):
         self.assertIs(plugin_for(save_id(1),'ps1'),Plugin)
         self.assertIsNone(plugin_for(save_id(1),'ps2'))
