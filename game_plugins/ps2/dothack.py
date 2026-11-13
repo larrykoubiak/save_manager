@@ -7,6 +7,8 @@ Unused records may contain uninitialized bytes after their zero status flag.
 import hashlib
 import struct
 
+from .internal_slots import InternalSlotsPlugin
+
 
 DIRECTORY = 'BASLUS-20267DOTHACK'
 SLOT_COUNT = 12
@@ -14,23 +16,25 @@ SLOT_SIZE = 34096
 INDEX_SIZE = 28
 
 
-class DotHackInfectionUS:
-    @classmethod
-    def library_slots(cls, bundle):
-        from ..library import LibrarySlot
-        data = bundle.file_data()
-        result = []
-        for info in cls.slots(bundle.save_id, data):
-            if info['state'] != 'occupied':
-                continue
-            number = info['number']
-            record = data[bundle.save_id][(number-1)*INDEX_SIZE:number*INDEX_SIZE]
-            result.append(LibrarySlot(str(number), number, info['label'],
-                          {'index': record, 'data': data[f'dhdata{number:02}']}, struct.unpack_from('<i', record, 24)[0]//60))
-        return result
-
+class DotHackInfectionUS(InternalSlotsPlugin):
     name = '.hack//Infection (US PS2)'
     slot_count = SLOT_COUNT
+    slot_error_name = '.hack'
+
+    @staticmethod
+    def _read_slot(save_directory, data, number):
+        return {'index': data[save_directory][(number - 1) * INDEX_SIZE:number * INDEX_SIZE],
+                'data': data[f'dhdata{number:02}']}
+
+    @staticmethod
+    def _slot_playtime(parts):
+        return struct.unpack_from('<i', parts['index'], 24)[0] // 60
+
+    @staticmethod
+    def _write_slot(save_directory, destination, number, parts):
+        start = (number - 1) * INDEX_SIZE
+        return {**destination, f'dhdata{number:02}': parts['data'],
+                save_directory: destination[save_directory][:start] + parts['index'] + destination[save_directory][start + INDEX_SIZE:]}
 
     @staticmethod
     def supports(save_directory):
@@ -79,33 +83,4 @@ class DotHackInfectionUS:
             result.append(dict(number=number, state=state, label=label,
                                sha256=hashlib.sha256(record + payload).hexdigest() if state == 'occupied' else None,
                                error='; '.join(problems)))
-        return result
-
-    @classmethod
-    def copy_slot(cls, save_directory, source, source_slot, destination, destination_slot, replace=False):
-        for number in (source_slot, destination_slot):
-            if type(number) is not int or not 1 <= number <= SLOT_COUNT:
-                raise ValueError('.hack slots must be integers between 1 and 12.')
-        if type(replace) is not bool:
-            raise ValueError('Slot replacement must be explicitly true or false.')
-        source_info = cls.slots(save_directory, source)[source_slot - 1]
-        destination_info = cls.slots(save_directory, destination)
-        if source_info['state'] != 'occupied':
-            raise ValueError('Source slot is empty or invalid: ' + (source_info['error'] or str(source_slot)))
-        if any(slot['state'] == 'invalid' for slot in destination_info):
-            raise ValueError('Destination contains invalid slots. Resolve them before copying.')
-        source_record = source[save_directory][(source_slot - 1) * INDEX_SIZE:source_slot * INDEX_SIZE]
-        start = (destination_slot - 1) * INDEX_SIZE
-        target = f'dhdata{destination_slot:02}'
-        payload = source[f'dhdata{source_slot:02}']
-        if destination[save_directory][start:start + INDEX_SIZE] == source_record and destination[target] == payload:
-            return dict(destination)
-        if destination_info[destination_slot - 1]['state'] == 'occupied' and not replace:
-            raise ValueError(f'Destination slot {destination_slot} is occupied. Choose replacement explicitly.')
-        result = dict(destination)
-        result[target] = payload
-        result[save_directory] = destination[save_directory][:start] + source_record + destination[save_directory][start + INDEX_SIZE:]
-        checked = cls.slots(save_directory, result)[destination_slot - 1]
-        if checked['state'] != 'occupied' or checked['sha256'] != source_info['sha256']:
-            raise ValueError('Copied slot verification failed.')
         return result

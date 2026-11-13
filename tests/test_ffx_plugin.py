@@ -48,7 +48,7 @@ class FFXPluginTest(unittest.TestCase):
 
     def test_unrecognized_regions_games_and_sizes_are_not_assumed_compatible(self):
         self.assertIs(plugin_for('BISLPS-25088FF090601'), FFXInternational)
-        self.assertIsNone(plugin_for('BASLUS-21577'))
+        self.assertFalse(FFXInternational.supports('BASLUS-21577'))
         self.assertIsNone(plugin_for('BASCUS-97102FF090600'))
         with self.assertRaises(ValueError):
             FFXInternational.decode('BISLPS-25088FF090600', fixture()[:-1])

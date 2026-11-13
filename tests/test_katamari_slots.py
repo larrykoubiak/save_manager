@@ -43,7 +43,7 @@ def game_save(data):
 class KatamariSlotTest(unittest.TestCase):
     def test_verified_occupancy_and_relocation_preserve_options_other_slots_and_inputs(self):
         self.assertIs(plugin_for(DIRECTORY), Plugin)
-        self.assertIsNone(plugin_for('BASLUS-21230Opt'))
+        self.assertIsNone(plugin_for('BASLUS-21230Opt', 'ps1'))
         source = fixture()
         slots = Plugin.slots(DIRECTORY, source)
         self.assertEqual([s['state'] for s in slots], ['occupied', 'empty', 'empty'])

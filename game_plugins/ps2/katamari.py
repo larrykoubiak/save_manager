@@ -8,6 +8,8 @@ import hashlib
 import struct
 import zlib
 
+from .internal_slots import InternalSlotsPlugin
+
 
 DIRECTORY = 'BASLUS-21008Opt'
 SLOT_COUNT = 3
@@ -25,25 +27,30 @@ def validation_error(data, size):
     return ''
 
 
-class KatamariDamacyUS:
-    @classmethod
-    def library_slots(cls, bundle):
-        from ..library import LibrarySlot
-        data = bundle.file_data()
-        return [LibrarySlot(str(info['number']), info['number'], info['label'],
-                           {'data': data[f"katamari_save{info['number']:02}"]})
-                for info in cls.slots(bundle.save_id, data) if info['state']=='occupied']
-
+class KatamariDamacyUS(InternalSlotsPlugin):
     name = 'Katamari Damacy (US PS2)'
+    directory = DIRECTORY
+    slot_size = SLOT_SIZE
+    options_size = OPTIONS_SIZE
     slot_count = SLOT_COUNT
+    slot_error_name = 'Katamari'
 
     @staticmethod
-    def supports(save_directory):
-        return save_directory == DIRECTORY
+    def _read_slot(save_directory, data, number):
+        return {'data': data[f'katamari_save{number:02}']}
 
     @staticmethod
-    def payload_names(save_directory):
-        return (save_directory, *(f'katamari_save{n:02}' for n in range(1, SLOT_COUNT + 1)))
+    def _write_slot(save_directory, destination, number, parts):
+        # Filenames select the position; preserve the record and shared options.
+        return {**destination, f'katamari_save{number:02}': parts['data']}
+
+    @classmethod
+    def supports(cls, save_directory):
+        return save_directory == cls.directory
+
+    @classmethod
+    def payload_names(cls, save_directory):
+        return (save_directory, *(f'katamari_save{n:02}' for n in range(1, cls.slot_count + 1)))
 
     @classmethod
     def slots(cls, save_directory, data):
@@ -51,13 +58,13 @@ class KatamariDamacyUS:
             raise ValueError('This Katamari game/region layout is unsupported.')
         if not isinstance(data, dict):
             raise ValueError('Katamari options and slot files are required.')
-        error = validation_error(data.get(save_directory), OPTIONS_SIZE)
+        error = validation_error(data.get(save_directory), cls.options_size)
         if error:
             raise ValueError('Katamari options: ' + error)
         result = []
-        for number in range(1, SLOT_COUNT + 1):
+        for number in range(1, cls.slot_count + 1):
             payload = data.get(f'katamari_save{number:02}')
-            error = validation_error(payload, SLOT_SIZE)
+            error = validation_error(payload, cls.slot_size)
             # The game's menu checks +4 in the record, after the 8-byte
             # library header; a zero record ID denotes an unused slot.
             state = ('invalid' if error else 'occupied'
@@ -66,32 +73,4 @@ class KatamariDamacyUS:
                                label='Saved game' if state == 'occupied' else '',
                                sha256=hashlib.sha256(payload).hexdigest() if state == 'occupied' else None,
                                error=error))
-        return result
-
-    @classmethod
-    def copy_slot(cls, save_directory, source, source_slot, destination, destination_slot, replace=False):
-        for number in (source_slot, destination_slot):
-            if type(number) is not int or not 1 <= number <= SLOT_COUNT:
-                raise ValueError('Katamari slots must be integers between 1 and 3.')
-        if type(replace) is not bool:
-            raise ValueError('Slot replacement must be explicitly true or false.')
-        source_info = cls.slots(save_directory, source)[source_slot - 1]
-        destination_info = cls.slots(save_directory, destination)
-        if source_info['state'] != 'occupied':
-            raise ValueError('Source slot is empty or invalid: ' + (source_info['error'] or str(source_slot)))
-        if any(slot['state'] == 'invalid' for slot in destination_info):
-            raise ValueError('Destination contains invalid slots. Resolve them before copying.')
-        payload = source[f'katamari_save{source_slot:02}']
-        target = f'katamari_save{destination_slot:02}'
-        if destination[target] == payload:
-            return dict(destination)
-        if destination_info[destination_slot - 1]['state'] == 'occupied' and not replace:
-            raise ValueError(f'Destination slot {destination_slot} is occupied. Choose replacement explicitly.')
-        result = dict(destination)
-        # Filenames select the position. No slot number or checksum needs
-        # rewriting; keep the complete source slot and destination options.
-        result[target] = payload
-        checked = cls.slots(save_directory, result)[destination_slot - 1]
-        if checked['state'] != 'occupied' or checked['sha256'] != source_info['sha256']:
-            raise ValueError('Copied slot verification failed.')
         return result

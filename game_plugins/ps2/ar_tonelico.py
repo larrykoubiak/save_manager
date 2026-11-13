@@ -9,6 +9,7 @@ import struct
 import hashlib
 
 from .. import Breakdown, Section
+from .internal_slots import InternalSlotsPlugin
 
 
 SLOT_SIZE = 0x6f46
@@ -40,23 +41,27 @@ def playtime(ticks):
     return f'{hours}:{minutes:02}:{seconds:02}'
 
 
-class ArTonelicoUS:
-    @classmethod
-    def library_slots(cls, bundle):
-        from ..library import LibrarySlot
-        data = bundle.file_data()[cls.payload_name(bundle.save_id)]
-        result = []
-        for info in cls.slots(bundle.save_id, data):
-            if info['state'] != 'occupied':
-                continue
-            number = info['number']
-            record = data[(number-1)*SLOT_SIZE:number*SLOT_SIZE]
-            result.append(LibrarySlot(str(number), number, info['label'], {'record': record}, u32(record, 0x39)//60))
-        return result
-
+class ArTonelicoUS(InternalSlotsPlugin):
     name = 'Ar tonelico: Melody of Elemia (US PS2)'
     payload_size = SAVE_SIZE
     slot_count = SLOT_COUNT
+    slot_error_name = 'Ar tonelico'
+
+    @staticmethod
+    def _read_slot(save_directory, data, number):
+        return {'record': data[(number - 1) * SLOT_SIZE:number * SLOT_SIZE]}
+
+    @staticmethod
+    def _slot_playtime(parts):
+        return u32(parts['record'], 0x39) // 60
+
+    @staticmethod
+    def _write_slot(save_directory, destination, number, parts):
+        start = (number - 1) * SLOT_SIZE
+        record = bytearray(parts['record'])
+        record[0] = number - 1
+        struct.pack_into('<I', record, 1, checksum(record))
+        return destination[:start] + bytes(record) + destination[start + SLOT_SIZE:]
 
     @staticmethod
     def supports(save_directory):
@@ -94,34 +99,6 @@ class ArTonelicoUS:
                            # Slot position/checksum change on relocation, game state does not.
                            'sha256': hashlib.sha256(record[5:]).hexdigest() if state == 'occupied' else None,
                            'error': error})
-        return result
-
-    @classmethod
-    def copy_slot(cls, save_directory, source, source_slot, destination, destination_slot, replace=False):
-        """Return a new GAMEFILE changing exactly one slot; never mutate inputs."""
-        for number in (source_slot, destination_slot):
-            if type(number) is not int or not 1 <= number <= SLOT_COUNT:
-                raise ValueError('Ar tonelico slots must be integers between 1 and 12.')
-        if type(replace) is not bool:
-            raise ValueError('Slot replacement must be explicitly true or false.')
-        source_info = cls.slots(save_directory, source)[source_slot - 1]
-        destination_info = cls.slots(save_directory, destination)
-        if source_info['state'] != 'occupied':
-            raise ValueError('Source slot is empty or invalid: ' + (source_info['error'] or str(source_slot)))
-        if any(slot['state'] == 'invalid' for slot in destination_info):
-            raise ValueError('Destination contains invalid slots. Resolve them before copying.')
-        start = (destination_slot - 1) * SLOT_SIZE
-        record = bytearray(source[(source_slot - 1) * SLOT_SIZE:source_slot * SLOT_SIZE])
-        record[0] = destination_slot - 1
-        struct.pack_into('<I', record, 1, checksum(record))
-        if bytes(record) == destination[start:start + SLOT_SIZE]:
-            return bytes(destination)
-        if destination_info[destination_slot - 1]['state'] == 'occupied' and not replace:
-            raise ValueError(f'Destination slot {destination_slot} is occupied. Choose replacement explicitly.')
-        result = destination[:start] + bytes(record) + destination[start + SLOT_SIZE:]
-        checked = cls.slots(save_directory, result)[destination_slot - 1]
-        if checked['state'] != 'occupied' or checked['sha256'] != source_info['sha256']:
-            raise ValueError('Copied slot verification failed.')
         return result
 
     @classmethod

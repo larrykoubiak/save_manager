@@ -28,6 +28,17 @@ New internal-slot plugins also index retained whole-save library bundles,
 including offline sources. Original versions stay available for download;
 the library lists their extracted progress instead of duplicate whole backups.
 
+## Internal PS2 slots
+
+Plugins for internal PS2 slots share `ps2/internal_slots.py`. `InternalSlotsPlugin` handles slot-number checks,
+replacement policy, copy verification and library extraction. Each game
+implements `slots()`, `_read_slot()` and `_write_slot()`; reads return named
+slot bytes, and writes return a new payload without mutating either input.
+The `slots()` fingerprint must describe progress independently of position.
+Optional `_slot_playtime()` and `_validate_destination()` hooks handle timers
+and shared settings. File names, offsets, checksums and encoding stay in the
+game module. FFX and THPS4 use separate whole-save relocation workflows.
+
 ## Numbered PS1 saves
 
 The numbered PS1 game modules share `ps1/numbered.py`: validation,
@@ -303,7 +314,7 @@ valid byte at +4. The CRC covers all bytes after that header. The slot menu
 uses the game record's +4 word (file offset 12) to distinguish occupied slots.
 Copying changes only the selected slot file, preserving its bytes and the
 destination options. Existing destination saves are required. Other regions
-and We Love Katamari are unsupported; in-game validation is pending.
+are unsupported; in-game validation is pending.
 
 Derived from the user's US executable: CRC routine `0x1827b0`, header
 write/read `0x183ec8` / `0x184734`, and overlay 0 slot checks `0x1048798`.
@@ -312,6 +323,51 @@ handle the three 7,064-byte records plus 1,000-byte options independently.
 The [noclip extractor](https://github.com/magcius/noclip.website/blob/main/src/KatamariDamacy/tools/extractor.ts)
 provided the overlay location/compression reference. Executable and save bytes
 remain in the ignored local experiments directory; tests use synthetic data.
+
+## We Love Katamari (US PS2)
+
+`BASLUS-21230Opt` uses the Katamari family adapter with three 11,944-byte
+`katamari_saveNN` records and a separate 1,008-byte options file. CRC32,
+header and occupancy checks apply to each position. Copying preserves the
+complete source record and all destination options and sibling slots.
+Both archived US saves validate; live-card writes and in-game validation
+remain pending. Other regions are unsupported.
+
+## Odin Sphere (US PS2)
+
+`BASLUS-21577` is a 93,548-byte version-4 file: eight shared header bytes
+followed by five `0x4914`-byte save records. Each record stores the sum of its
+bytes from +4 onward at +0. The load menu tests bit 0 of +`0x4910` for
+occupancy. Copying preserves the complete source record, including its checksum,
+and changes no shared header bytes or other positions.
+
+The menu reads the timer at +`0x4904`, divides by the single-precision
+`59.94f` constant (`0x426fc28f`), and truncates to seconds. Its calendar
+fields at +`0x4908` are year-since-2000 (u16), month and day.
+Derived from the private US executable: validation `0x29ab20`, checksum
+`0x29bc90`, packing/unpacking `0x29ac10`/`0x29ad00`, and load-menu preview
+`0x33e0e0`. Both archived saves validate and all five destinations preserve
+unrelated bytes in offline copy checks. Synthetic raw/ECC-card tests also
+check backups and icon preservation. In-game validation remains pending;
+other regions and Leifthrasir are unsupported.
+
+## Monster Hunter (US PS2)
+
+`BASLUS-20896MH` is a 72,584-byte encoded file. Three 1,768-byte character
+records begin at `0x10260`; their first byte controls occupancy. Names start
+at +8 and the character menu reads playtime in seconds at +`0x5dc`.
+The stored seed drives XOR with successive `(seed or 1) * 176 % 65363`
+values. The checksum sums the decoded `0x8dbc` halfwords after the eight-byte
+header; the final eight bytes are padding outside the encoded body.
+Copying changes one character and the checksum while retaining the destination
+seed, patch area, shared settings, other characters and padding.
+
+Derived from the private US executable: encode/decode `0x23f320`/`0x23f3f0`,
+character copying `0x23f730`, three-position dispatch `0x23f8f8`, and menu
+`0x23f110`. [MH Oldschool's codec research](https://github.com/MH-Oldschool/mhpatcher/blob/main/src/dnas/savecodec.c)
+provides an independent reference for the cipher. Both archived US saves
+pass checksums and relocation checks. In-game validation remains pending;
+no other regions or Monster Hunter sequels are recognized.
 
 ## Steambot Chronicles (US PS2)
 

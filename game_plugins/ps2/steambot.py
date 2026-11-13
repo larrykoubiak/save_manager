@@ -8,6 +8,8 @@ Shared settings are separate; incomplete saves may supply valid source slots.
 import hashlib
 import struct
 
+from .internal_slots import InternalSlotsPlugin
+
 
 DIRECTORY = 'BASLUS-21344'
 SLOT_COUNT = 12
@@ -50,23 +52,31 @@ def decode(data, common=False):
     return bytes(plain)
 
 
-class SteambotChroniclesUS:
-    @classmethod
-    def library_slots(cls, bundle):
-        from ..library import LibrarySlot
-        data = bundle.file_data()
-        result = []
-        for info in cls.slots(bundle.save_id, data):
-            if info['state'] != 'occupied':
-                continue
-            number = info['number']
-            payload = data[f'FILE_{number-1:02}']
-            ticks = struct.unpack_from('<i', decode(payload), 0x402c)[0]
-            result.append(LibrarySlot(str(number), number, info['label'], {'data': payload}, min(ticks,0x66ff2ff)//30))
-        return result
-
+class SteambotChroniclesUS(InternalSlotsPlugin):
     name = 'Steambot Chronicles (US PS2)'
     slot_count = SLOT_COUNT
+    slot_error_name = 'Steambot'
+    invalid_destination_message = 'Destination contains invalid slots. Create a complete save in-game first.'
+
+    @staticmethod
+    def _read_slot(save_directory, data, number):
+        return {'data': data[f'FILE_{number - 1:02}']}
+
+    @staticmethod
+    def _slot_playtime(parts):
+        ticks = struct.unpack_from('<i', decode(parts['data']), 0x402c)[0]
+        return min(ticks, 0x66ff2ff) // 30
+
+    @staticmethod
+    def _write_slot(save_directory, destination, number, parts):
+        return {**destination, f'FILE_{number - 1:02}': parts['data']}
+
+    @classmethod
+    def _validate_destination(cls, save_directory, destination):
+        try:
+            decode(destination.get(save_directory), common=True)
+        except ValueError as error:
+            raise ValueError('Destination shared settings are missing or invalid. Create a complete save in-game first.') from error
 
     @staticmethod
     def supports(save_directory):
@@ -130,33 +140,3 @@ class SteambotChroniclesUS:
             problems.append('missing or invalid slots: ' + ', '.join(invalid))
         return {'row_title': 'Steambot Chronicles',
                 'summary': ('Incomplete save: ' + '; '.join(problems) + '. Valid slots can be copied out.') if problems else ''}
-
-    @classmethod
-    def copy_slot(cls, save_directory, source, source_slot, destination, destination_slot, replace=False):
-        for number in (source_slot, destination_slot):
-            if type(number) is not int or not 1 <= number <= SLOT_COUNT:
-                raise ValueError('Steambot slots must be integers between 1 and 12.')
-        if type(replace) is not bool:
-            raise ValueError('Slot replacement must be explicitly true or false.')
-        source_info = cls.slots(save_directory, source)[source_slot - 1]
-        destination_info = cls.slots(save_directory, destination)
-        if source_info['state'] != 'occupied':
-            raise ValueError('Source slot is empty or invalid: ' + (source_info['error'] or str(source_slot)))
-        if any(slot['state'] == 'invalid' for slot in destination_info):
-            raise ValueError('Destination contains invalid slots. Create a complete save in-game first.')
-        try:
-            decode(destination.get(save_directory), common=True)
-        except ValueError as error:
-            raise ValueError('Destination shared settings are missing or invalid. Create a complete save in-game first.') from error
-        payload = source[f'FILE_{source_slot - 1:02}']
-        target = f'FILE_{destination_slot - 1:02}'
-        if destination[target] == payload:
-            return dict(destination)
-        if destination_info[destination_slot - 1]['state'] == 'occupied' and not replace:
-            raise ValueError(f'Destination slot {destination_slot} is occupied. Choose replacement explicitly.')
-        result = dict(destination)
-        result[target] = payload
-        checked = cls.slots(save_directory, result)[destination_slot - 1]
-        if checked['state'] != 'occupied' or checked['sha256'] != source_info['sha256']:
-            raise ValueError('Copied slot verification failed.')
-        return result
