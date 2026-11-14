@@ -43,6 +43,8 @@ def merger_for_game(game_id, backend_id='ps2'):
 
 def slot_data(plugin, save_directory, save_files):
     """Select a plugin's single payload or its named set of slot/index files."""
+    if callable(getattr(plugin, 'select_files', None)):
+        return plugin.select_files(save_directory, save_files)
     if callable(getattr(plugin, 'payload_names', None)):
         return {name: save_files.get(name, b'') for name in plugin.payload_names(save_directory)}
     return save_files.get(plugin.payload_name(save_directory), b'')

@@ -78,9 +78,10 @@ class PS1WebTest(unittest.TestCase):
 
     def test_ps1_sync_catches_up_offline_without_touching_ps2(self):
         self.settle()
-        group=self.service.sync.configure({'directory':'SAME','card_ids':self.ids[:2]})
+        group=self.service.sync.configure({'name':'Shared','card_ids':self.ids[:2]})
         self.assertEqual(group['backend'],'ps1')
-        ps2=self.service.sync.configure({'directory':'SAME','card_ids':self.ids[2:]})
+        self.service.sync.resolve(group['id'],{'source_card_id':self.ids[0]})
+        ps2=self.service.sync.configure({'name':'Shared','card_ids':self.ids[2:]})
         self.assertEqual(ps2['backend'],'ps2');self.assertNotEqual(ps2['id'],group['id'])
         before=[p.read_bytes() for p in self.cards[2:]]
         offline=self.root/'offline'
@@ -97,7 +98,7 @@ class PS1WebTest(unittest.TestCase):
         self.assertEqual(card.payload(card.entries['SAME']),payload('New progress'))
         self.assertEqual([p.read_bytes() for p in self.cards[2:]],before)
         with self.assertRaisesRegex(ValueError,'same storage backend'):
-            self.service.sync.configure({'directory':'SAME','card_ids':[self.ids[0],self.ids[2]]})
+            self.service.sync.configure({'name':'Shared','card_ids':[self.ids[0],self.ids[2]]})
 
     def test_file_filter_can_change_without_replacing_location_history(self):
         location = self.locations[0]
@@ -135,7 +136,7 @@ class PS1WebTest(unittest.TestCase):
         self.assertEqual(status, 201, done)
         self.assertEqual(self.request(f"/api/transfers/{done['id']}/apply", {'cards_idle':True})[0], 200)
         self.scan(1)
-        group = self.service.sync.configure({'directory':'SAME', 'card_ids':self.ids[:2]})
+        group = self.service.sync.configure({'name':'Shared', 'card_ids':self.ids[:2]})
         status, preview = self.request('/api/transfers/preview', {'save_id':self.save(0)['id'], 'destination_card_id':self.ids[1]})
         self.assertEqual(status, 201, preview)
         before = [p.read_bytes() for p in self.cards]
@@ -173,7 +174,7 @@ class PS1WebTest(unittest.TestCase):
         device_id = self.devices[0]
         self.service.update_device(device_id, {'poll_seconds':300})
         extra = self.service.save_location(device_id, dict(name='Extra',path='extra',backend='ps1',suffix='*'))
-        group = self.service.sync.configure({'directory':'SAME','card_ids':self.ids[:2]})
+        group = self.service.sync.configure({'name':'Shared','card_ids':self.ids[:2]})
         status, preview = self.request('/api/transfers/preview', {'save_id':self.save(0)['id'],'destination_card_id':self.ids[1]})
         self.assertEqual(status,201,preview)
         before = [p.read_bytes() for p in self.cards]
@@ -240,7 +241,8 @@ class PS1WebTest(unittest.TestCase):
         self.assertEqual(status, 201, preview)
         self.assertEqual(self.request(f"/api/transfers/{preview['id']}/apply", {'cards_idle': True})[0], 200)
         self.settle()
-        group = self.service.sync.configure({'directory': 'SAME', 'card_ids': self.ids[:2]})
+        group = self.service.sync.configure({'name': 'Shared', 'card_ids': self.ids[:2]})
+        self.service.sync.resolve(group['id'],{'source_card_id':self.ids[0]})
         self.service.sync.next_tick = 0
         self.service.sync.tick()
         self.assertIn('SAME', Card(self.cards[1].read_bytes()).entries)
@@ -267,6 +269,8 @@ class BackendMigrationTest(unittest.TestCase):
             group=migrated.one('SELECT * FROM sync_groups WHERE id=9')
             self.assertEqual(group['backend'],'ps2');self.assertEqual(group['snapshot'],'/data/sync/9/source.bin')
             self.assertEqual(group['next_scan'],1234)
+            self.assertFalse(group['enabled'])
+            self.assertEqual(group['scope'],'save')
             member=migrated.one('SELECT * FROM sync_members WHERE group_id=9')
             self.assertEqual(member['baseline_hash'],'savehash');self.assertEqual(member['retry_after'],999)
             with migrated.connect() as db:

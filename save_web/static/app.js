@@ -15,12 +15,20 @@ const systemState = new Map();
 async function api(path, body, method='POST') {
   const options = body === undefined ? {} : {method, headers:{'Content-Type':'application/json','X-Save-Manager':'1'}, body:JSON.stringify(body)};
   const response = await fetch(`/api/${path}`, options);
-  const result = await response.json();
+  const mime = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  if (mime !== 'application/json' && !mime.endsWith('+json')) {
+    if (response.redirected) throw new Error('A sign-in page was returned. Reload and sign in again.');
+    throw new Error(response.ok ? 'The server returned a page instead of app data. Reload to reconnect.' : `Server unavailable (HTTP ${response.status}).`);
+  }
+  let result;
+  try { result = await response.json(); }
+  catch { throw new Error('The server returned an incomplete response. Try again.'); }
   if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`);
   return result;
 }
-function notice(message, error=false) {
+function notice(message, error=false, kind='action') {
   $('#notice').textContent = message; $('#notice').hidden = false; $('#notice').classList.toggle('error', error);
+  $('#notice').dataset.kind = kind;
 }
 function badge(status, label) { return `<span class="badge ${h(status)}">${h(label || ({never:'Not scanned',online:'Available',offline:'Offline',partial:'Partly available',error:'Scan error'}[status] || status))}</span>`; }
 function when(value) { return value ? new Date(value).toLocaleString([], {dateStyle:'medium',timeStyle:'short'}) : 'Never'; }
@@ -76,7 +84,7 @@ function renderNavigation() {
   document.querySelectorAll('.nav').forEach(button => button.classList.toggle('active', button.dataset.view === activeView));
   const name = systemName();
   $('#page-title').textContent = {devices:'Devices',saves:`${name} Save Library`,library:`${name} Memory Card Browser`,activity:'Activity',sync:`${name} Automatic Sync`}[activeView];
-  $('#page-description').textContent = {saves:`Your ${name} games and save slots, stored independently of memory cards.`,devices:'Shared devices, their systems, locations and scan schedules.',library:`${name} saves and sources. One column per device.`,activity:'Scans, transfers and backups across all systems.',sync:`Selected ${name} saves, queued updates and conflicts.`}[activeView];
+  $('#page-description').textContent = {saves:`Your ${name} games and save slots, stored independently of memory cards.`,devices:'Shared devices, their systems, locations and scan schedules.',library:`${name} saves and sources. One column per device.`,activity:'Scans, transfers and backups across all systems.',sync:`Shared ${name} memory cards, queued updates and conflicts.`}[activeView];
   $('#system-nav').innerHTML = systems().map(system => {
     const count = activeView === 'saves' ? (data.library?.games || []).filter(game => game.backend === system.id).length : new Set(currentSaves().filter(s => saveBackend(s) === system.id).map(s => s.directory)).size;
     const selected = scopedView() && activeSystem === system.id;
@@ -112,11 +120,14 @@ function renderSavedLibrary() {
   if (signature === renderedSavedLibrary) return;
   const expanded = new Set([...$('#saved-library').querySelectorAll('details[open][data-library-key]')].map(node => node.dataset.libraryKey));
   $('#saved-library').innerHTML = games.map(game => `<details class="saved-game" data-library-key="game-${game.id}" ${expanded.has(`game-${game.id}`)?'open':''}>
-    <summary>${game.icon_hash?`<img class="saved-icon" src="/api/icons/${h(game.icon_hash)}.gif" alt="" loading="lazy">`:''}<strong>${h(game.title)}</strong>${game.serial?`<code class="game-serial">${h(game.serial)}</code>`:''}<span class="hint">${game.saves.length} distinct save${game.saves.length === 1?'':'s'}</span></summary>
+    <summary>${game.icon_hash?`<img class="saved-icon" src="/api/icons/${h(game.icon_hash)}.gif" alt="" loading="lazy">`:''}<strong>${h(game.title)}</strong>${game.serial?`<code class="game-serial">${h(game.serial)}</code>`:''}<span class="hint">${game.saves.length} save${game.saves.length === 1?'':'s'}</span></summary>
     <div class="game-card-ports"><span>Memory-card ports: <strong>${h(cardPortLabel(game.card_ports))}</strong></span> <button data-action="game-settings" data-id="${game.id}">Game settings</button>${game.card_port_note?`<p class="game-port-note">${h(game.card_port_note)}</p>`:''}</div>
     <div class="table-wrap"><table class="matrix saved-table"><thead><tr><th>Save</th><th>Playtime</th><th>Sources</th><th>Actions</th></tr></thead><tbody>${game.saves.map(save => {
       const sources = save.sources;
-      return `<tr data-library-save="${h(save.content_hash)}" data-library-version="${save.id}"><td>${h(save.label)}<small><code>${h(save.content_hash.slice(0,8))}</code> · Imported ${h(when(save.created))}</small></td><td>${h(playtime(save.playtime_seconds))}</td>
+      const history = save.revisions.filter(version => version.id !== save.id);
+      const historyKey = `save-${game.id}-${save.save_key}`;
+      const historyHtml = history.length ? `<details data-library-key="${h(historyKey)}" ${expanded.has(historyKey)?'open':''}><summary>Revision history (${history.length})</summary>${history.map(version => `<div class="save-revision">${h(version.label)}<small>${h(when(version.created))} · ${h(version.device)} · <a href="/api/library/versions/${version.id}/download" download>Download revision</a></small></div>`).join('')}</details>` : '';
+      return `<tr data-library-save="${h(save.content_hash)}" data-library-version="${save.id}"><td>${h(save.label)}<small><code>${h(save.content_hash.slice(0,8))}</code> · Imported ${h(when(save.created))}</small>${historyHtml}</td><td>${h(playtime(save.playtime_seconds))}</td>
       <td>${sources.length?sources.map(source => `<div>${h(source.device)}<small>${h(source.filename)}${source.original_slot === null?'':` · Original slot ${source.original_slot}`} · ${source.deleted?'Removed source':!source.present?'Save absent':source.available?'Available':'Offline'}</small></div>`).join(''):`<div>${h(save.device)}<small>${h(save.filename)} · Retained copy${save.original_slots.length?` · Original slot ${h(save.original_slots.join(', '))}`:''}</small></div>`}</td>
       <td><a href="/api/library/versions/${save.id}/download" download>Download</a></td></tr>`;
     }).join('')}</tbody></table></div></details>`).join('') || `<div class="empty">No ${h(systemName())} saves stored yet. Scan a device from Cards or Devices to collect its saves.</div>`;
@@ -232,7 +243,7 @@ function renderLibrary() {
   const html = `<table class="matrix comparison"><caption class="sr-only">Save copies by device</caption><thead><tr><th scope="col" aria-sort="${librarySort === 'name-asc' ? 'ascending' : librarySort === 'name-desc' ? 'descending' : 'none'}"><button class="sort-heading" data-action="sort-name" title="Sort by save name A–Z or Z–A">Save ${librarySort === 'name-asc' ? '↑' : librarySort === 'name-desc' ? '↓' : '↕'}</button></th><th scope="col" class="size-column" aria-sort="${librarySort === 'size-desc' ? 'descending' : librarySort === 'size-asc' ? 'ascending' : 'none'}"><button class="sort-heading" data-action="sort-size" title="Card space including icons and directory overhead. Ranges show different copies; sorting uses the largest copy.">Size ${librarySort === 'size-desc' ? '↓' : librarySort === 'size-asc' ? '↑' : '↕'}</button></th>${devices.map(d => deviceHeader(d,activeSystem)).join('')}</tr></thead><tbody>${rows.map(([directory,saves]) => {
     const different = new Set(saves.map(s => s.sha256)).size > 1;
     const icon = saves.find(s => s.icon_hash)?.icon_hash || 'placeholder';
-    return `<tr data-save="${h(directory)}" data-backend="${saveBackend(saves[0])}"><th scope="row"><div class="save-label"><img class="save-icon" src="/api/icons/${h(icon)}.gif${animation}" alt="" width="64" height="64" loading="lazy"><div><strong>${h(rowTitle(directory, saves))}</strong><small class="directory">${saveBackend(saves[0]).toUpperCase()} · ${h(directory)}</small>${badge(different?'partial':saves.length>1?'online':'never', different?'Different copies':saves.length>1?'Matching copies':'Single copy')}<div class="table-actions"><button data-action="configure-sync" data-id="${saves[0].id}">${syncLabel(directory,saveBackend(saves[0]))}</button></div></div></div></th><td class="save-size" data-size="${rowSize(saves) ?? ''}" title="Memory-card space including icons and directory overhead; range across copies">${h(sizeRange(saves))}</td>${devices.map(device => {
+    return `<tr data-save="${h(directory)}" data-backend="${saveBackend(saves[0])}"><th scope="row"><div class="save-label"><img class="save-icon" src="/api/icons/${h(icon)}.gif${animation}" alt="" width="64" height="64" loading="lazy"><div><strong>${h(rowTitle(directory, saves))}</strong><small class="directory">${saveBackend(saves[0]).toUpperCase()} · ${h(directory)}</small>${badge(different?'partial':saves.length>1?'online':'never', different?'Different copies':saves.length>1?'Matching copies':'Single copy')}</div></div></th><td class="save-size" data-size="${rowSize(saves) ?? ''}" title="Memory-card space including icons and directory overhead; range across copies">${h(sizeRange(saves))}</td>${devices.map(device => {
       const copies = saves.filter(s => deviceOf(data.cards.find(c => c.id === s.card_id))?.id === device.id);
       if (!copies.length) {
         const uncertain = locationStatus(systemLocations().filter(l => l.device_id === device.id)) !== 'online';
@@ -268,38 +279,30 @@ function renderCards() {
       <div class="table-wrap"><table><thead><tr><th>Save</th><th>Directory</th><th></th></tr></thead><tbody>${saves.map(s => `<tr><td>${h(s.title || s.directory)}</td><td>${h(s.directory)}</td><td><div class="table-actions"><button data-action="transfer" data-id="${s.id}" ${canTransfer(s)?'':'disabled'}>Transfer…</button><button class="danger" data-action="delete-save" data-id="${s.id}" ${canDelete(s)?'':'disabled'}>Delete…</button></div></td></tr>`).join('') || '<tr><td colspan="3">No saves in the last known inventory.</td></tr>'}</tbody></table></div></article>`;
   }).join('') || '<div class="empty">No cards discovered yet. Add a location and scan this device.</div>';
 }
-function syncLabel(directory,backend='ps2') {
-  const group = data.sync_groups.find(g => g.directory === directory && g.backend === backend);
-  return !group ? 'Sync…' : !group.enabled ? 'Sync · paused' : `Sync · ${group.status}`;
-}
 function renderSync() {
   $('#sync-groups').innerHTML = data.sync_groups.filter(g => g.backend === activeSystem).map(group => {
-    const saves = data.saves.filter(s => s.directory === group.directory && saveBackend(s) === group.backend);
     const members = data.sync_members.filter(m => m.group_id === group.id);
-    return `<article class="sync-group"><div class="save-heading"><h2>${h(rowTitle(group.directory,saves))}</h2>${badge(group.enabled?group.status:'paused')}</div><code>${h(group.backend.toUpperCase())} · ${h(group.directory)}</code><p>${h(group.message || 'Waiting for stable scans.')}</p><div class="table-actions"><button data-action="configure-sync" data-id="${saves[0]?.id}">Choose cards…</button><button data-action="toggle-sync" data-id="${group.id}">${group.enabled?'Pause sync':'Resume sync'}</button><button data-action="retry-sync" data-id="${group.id}">Scan / retry now</button></div><div class="table-wrap"><table><thead><tr><th>Copy</th><th>Status</th><th></th></tr></thead><tbody>${members.map(member => {
+    return `<article class="sync-group"><div class="save-heading"><h2>${h(group.label)}</h2>${badge(group.enabled?group.status:'paused')}</div><p>${h(group.message || 'Waiting for stable scans.')}</p><div class="table-actions"><button data-action="configure-card-sync" data-id="${group.id}">Choose cards…</button><button data-action="toggle-sync" data-id="${group.id}">${group.enabled?'Pause sync':'Resume sync'}</button><button data-action="retry-sync" data-id="${group.id}">Scan / retry now</button></div><div class="table-wrap"><table><thead><tr><th>Memory card</th><th>Status</th><th></th></tr></thead><tbody>${members.map(member => {
       const card = data.cards.find(c => c.id === member.card_id);
-      const save = saves.find(s => s.card_id === card.id && s.present);
-      return `<tr><td>${h(cardLabel(card))}${save?`<small>${h(save.summary || save.title || '')}</small>`:''}</td><td>${badge(member.status)}<small>${h(member.message)}</small></td><td><button data-action="sync-source" data-id="${group.id}" data-card="${card.id}" ${save && canTransfer(save)?'':'disabled'}>Use this copy…</button></td></tr>`;
+      return `<tr><td>${h(cardLabel(card))}</td><td>${badge(member.status)}<small>${h(member.message)}</small></td><td><button data-action="sync-source" data-id="${group.id}" data-card="${card.id}" ${card.present && card.formatted && locationOf(card)?.status === 'online'?'':'disabled'}>Use this card…</button></td></tr>`;
     }).join('')}</tbody></table></div></article>`;
-  }).join('') || '<p class="empty">No saves enabled for automatic sync. Use Sync… beside a save in the Browser to choose its cards.</p>';
+  }).join('') || '<p class="empty">No memory cards enabled for automatic sync. Create a group for each shared card.</p>';
 }
-function openSync(saveId) {
-  const save = data.saves.find(s => s.id === saveId);
-  if (!save) throw new Error('Save is no longer available. Refresh and try again.');
-  const form = $('#sync-form'); form.reset(); form.dataset.directory = save.directory;
+function openCardSync(groupId) {
+  const group = data.sync_groups.find(g => g.id === groupId);
+  const backend = group?.backend || activeSystem;
+  const form = $('#sync-form'); form.reset(); form.dataset.group = group?.id || '';
   form.querySelector('.form-error').textContent = '';
-  const backend = saveBackend(save);
-  const group = data.sync_groups.find(g => g.directory === save.directory && g.backend === backend);
-  const chosen = group ? data.sync_members.filter(m => m.group_id === group.id).map(m => m.card_id) : currentSaves().filter(s => s.directory === save.directory && saveBackend(s) === backend).map(s => s.card_id);
-  $('#sync-save').textContent = `${save.row_title || save.title || save.directory} · ${save.directory}`;
-  $('#sync-card-choices').innerHTML = data.cards.filter(c => backendOf(c) === backend && ((c.present && c.formatted && canWriteCard(c) && locationOf(c)?.status === 'online') || chosen.includes(c.id))).map(card => `<label class="checkbox"><input type="checkbox" name="card_id" value="${card.id}" ${chosen.includes(card.id)?'checked':''}> ${h(cardLabel(card))}${locationOf(card)?.status !== 'online'?' · offline':''}</label>`).join('');
+  form.elements.name.value = group?.label || `${systemName(backend)} shared card`;
+  const chosen = group ? data.sync_members.filter(m => m.group_id === group.id).map(m => m.card_id) : [];
+  $('#sync-card-choices').innerHTML = data.cards.filter(c => backendOf(c) === backend && ((c.present && canWriteCard(c)) || chosen.includes(c.id))).map(card => `<label class="checkbox"><input type="checkbox" name="card_id" value="${card.id}" ${chosen.includes(card.id)?'checked':''}> ${h(cardLabel(card))}${!card.formatted?' · blank card will be initialized':''}${locationOf(card)?.status !== 'online'?' · offline':''}</label>`).join('');
   $('#sync-dialog').showModal();
 }
 function openSyncSource(key,cardId) {
   const group = data.sync_groups.find(g => g.id === key), card = data.cards.find(c => c.id === cardId);
   const form = $('#sync-source-form'); form.dataset.group = key; form.dataset.card = cardId;
   form.querySelector('.form-error').textContent = '';
-  $('#sync-source-summary').textContent = `${group.directory} · ${cardLabel(card)}`;
+  $('#sync-source-summary').textContent = `${group.label} · ${cardLabel(card)}`;
   $('#sync-source-dialog').showModal();
 }
 function renderActivity() {
@@ -307,7 +310,10 @@ function renderActivity() {
     ...data.transfers.map(t => ({...t,type:'transfer',label:t.action,detail:`${t.directory}${t.source_slot?' · slot '+t.source_slot+' → '+t.destination_slot:''} → ${data.cards.find(c => c.id === t.destination_card_id)?.filename || t.destination_filename || '?'}`}))].sort((a,b) => b.created.localeCompare(a.created));
   $('#activity').innerHTML = events.length ? `<div class="table-wrap"><table><thead><tr><th>Operation</th><th>Status</th><th>Started</th><th>Details</th></tr></thead><tbody>${events.map(e => `<tr><td>${h(e.label)}<small>${h(e.detail)}</small></td><td>${badge(e.status)}</td><td>${h(when(e.created))}</td><td>${e.error?`<span class="error-text">${h(e.error)}</span>`:''}${e.backup?`Backup: <code>${h(e.backup)}</code>`:''}${!e.error && !e.backup ? h(e.finished?`Finished ${when(e.finished)}`:'Awaiting completion'):''}${e.status==='preview'?`<button data-action="cancel-preview" data-id="${h(e.id)}">Cancel preview</button>`:''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Your scans and transfers will appear here.</div>';
 }
-async function refresh() { data = await api('inventory'); applyRoute(); render(); }
+async function refresh() {
+  data = await api('inventory'); applyRoute(); render();
+  if ($('#notice').dataset.kind === 'connection') $('#notice').hidden = true;
+}
 function openDevice(id) {
   const form = $('#device-form'); form.reset(); form.dataset.id = id || ''; form.querySelector('.form-error').textContent = '';
   const device = data.devices.find(d => d.id === id);
@@ -353,7 +359,7 @@ function updateLocationRoot() {
 function updateLocationAccess() {
   const form = $('#location-form');
   const device = data.devices.find(d => d.id === Number(form.dataset.deviceId || form.elements.device_id.value));
-  const readOnly = device?.transport === 'ftp' || form.elements.suffix.value === '.vmp';
+  const readOnly = form.elements.suffix.value === '.vmp';
   form.elements.writable.disabled = readOnly;
   if (readOnly) form.elements.writable.checked = false;
   $('#location-write-hint').hidden = !readOnly;
@@ -545,13 +551,14 @@ $('#delete-location-form').addEventListener('submit', event => {
     await refresh(); notice('Location removed. Files on disk and transfer history were kept.');
   });
 });
+$('#new-card-sync').addEventListener('click', () => openCardSync());
 $('#sync-form').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;
   formSubmit(form, async () => {
     const cardIds = [...form.querySelectorAll('[name="card_id"]:checked')].map(input => Number(input.value));
-    const group = await api('sync/groups',{directory:form.dataset.directory,card_ids:cardIds});
+    const group = await api('sync/groups',{name:form.elements.name.value,card_ids:cardIds,...(form.dataset.group?{group_id:Number(form.dataset.group)}:{})});
     $('#sync-dialog').close(); await refresh(); switchView('sync',group.backend);
-    notice(group.status === 'conflict' ? 'Sync configured. Choose the starting copy because these saves differ.' : 'Sync enabled. Watching selected devices every five minutes.');
+    notice(group.status === 'conflict' ? 'Sync configured. Choose the starting copy because these cards differ.' : 'Sync enabled. Watching selected devices every five minutes.');
   });
 });
 $('#sync-source-form').addEventListener('submit', event => {
@@ -623,7 +630,7 @@ document.addEventListener('click', async event => {
       case 'cards': selectedDevice = id; renderCards(); $('#cards-dialog').showModal(); break;
       case 'transfer': openTransfer(id); break;
       case 'delete-save': openTransfer(id, null, true); break;
-      case 'configure-sync': openSync(id); break;
+      case 'configure-card-sync': openCardSync(id); break;
       case 'retry-sync': await api(`sync/groups/${id}/retry`,{}); await refresh(); break;
       case 'sync-source': openSyncSource(id, Number(button.dataset.card)); break;
       case 'toggle-sync': { const group = data.sync_groups.find(g => g.id === id); await api(`sync/groups/${id}`,{enabled:!group.enabled},'PUT'); await refresh(); break; }
@@ -651,8 +658,8 @@ window.addEventListener('popstate', () => { applyRoute(); render(); });
 $('#search').addEventListener('input', renderLibrary);
 $('#animate-icons').checked = !matchMedia('(prefers-reduced-motion: reduce)').matches;
 $('#animate-icons').addEventListener('change', renderLibrary);
-refresh().catch(error => notice(`Could not load the library: ${error.message}`,true));
-setInterval(() => { if (!document.hidden) refresh().catch(error => notice(`Connection interrupted: ${error.message}`,true)); }, 4000);
+refresh().catch(error => notice(`Could not load the library: ${error.message}`,true,'connection'));
+setInterval(() => { if (!document.hidden) refresh().catch(error => notice(`Connection interrupted: ${error.message}`,true,'connection')); }, 4000);
 
 $('#saved-search').addEventListener('input',renderSavedLibrary);
 $('#library-settings-form').addEventListener('submit',event => {

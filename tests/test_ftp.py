@@ -130,7 +130,7 @@ class FTPTest(unittest.TestCase):
         self.assertEqual(self.scan()['status'],'done')
         cards=[c for c in self.service.inventory()['cards'] if c['location_id'] in (self.location['id'],second['id']) and c['present']]
         self.assertEqual({c['filename'] for c in cards},{'PS1MEMCARD.VM1','PS2MEMCARD.VM2'})
-        self.assertTrue(all(c['read_only'] for c in cards))
+        self.assertFalse(any(c['read_only'] for c in cards))
         games=self.service.library.inventory()['games']
         self.assertTrue(any(g['backend']=='ps2' and g['game_key']=='PS2SAVE' for g in games))
         self.assertEqual(self.scan()['status'],'done')

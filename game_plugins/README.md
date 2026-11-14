@@ -416,3 +416,52 @@ THPS4 copy labels include the quick-load summary's `cash` and `numGoalsBeaten`
 fields. Compact integer types are verified against the executable's writer
 at `0x18a9a0` and reader at `0x18b2f0`–`0x18b3c0`. Unknown summary encodings
 leave progress unavailable. No playtime field has been verified.
+
+## GTA III slots (US PS2)
+
+`BASLUS-20062GTA30000` contains shared files and up to eight progress files.
+The slot is the filename's leading `1 `–`8 `; the remainder is its mission
+label. The 201,752-byte progress file contains aligned, length-prefixed blocks
+and a final additive byte checksum. Its saved game clock is at +44, in
+milliseconds. Relocation changes only the filename, leaving progress bytes
+and their checksum intact. Adding/replacing a file preserves shared data,
+sibling slots, unrelated saves and existing metadata; new files retain the
+source timestamps. Duplicate slot prefixes and invalid checksums are refused.
+
+Cross-checked against the user's `SLUS_200.62` executable and the
+[re3 MemoryCard implementation](https://github.com/savegame/re3_/blob/master/src/save/MemoryCard.cpp).
+Both archived mission saves pass validation and raw/ECC planning for all eight
+positions. In-game verification remains pending.
+
+## Burnout 3 careers (US PS2)
+
+The version-16 `BASLUS-21050` payload is 61,772 bytes. Three 1,180-byte
+career records begin at `0xe374`. The checksum at `0xf148` is the sum of the
+preceding little-endian 32-bit words. Copying changes only the selected record
+and checksum; shared records, settings and the other careers remain intact.
+The library identifies the archived Den and Larry careers independently.
+
+Layout reference: [Takedawn's PS2 save research](https://github.com/xenophobentx/takedawn/blob/main/docs/research/ps2-xbox-save-feasibility-2026-10-22.md),
+cross-checked against both US archives. No playtime field is exposed without
+further verification. In-game verification remains pending.
+
+## Tony Hawk's Proving Ground careers (US PS2)
+
+`BASLUS-21616` named careers use the THPS4 envelope and lowercase-name filename
+mapping with version 76, 169,984-byte payloads, `thpg.ico`, and `THPG:` icon
+titles. The shared adapter validates both checksums and preserves serialized
+game state when naming a conflicting copy. Both archived Den/Ber careers
+validate; they already coexist under separate native names. This does not
+combine careers or reduce their memory-card space. In-game verification of
+renamed copies remains pending.
+
+## PS2 single-profile progress (US)
+
+Crazy Taxi exposes best fares and Crazy Box completion; DOA2 Hardcore exposes
+recorded matches; Budokai Tenkaichi and Soulcalibur II expose playtime; KOF:
+The Orochi Saga exposes achievement and games-played counters. These adapters
+retain the whole profile and do not expose internal slot copying. Known
+checksums are validated, including Soulcalibur II's encoded profile; Crazy
+Taxi and KOF use header/layout validation. Offsets and algorithms were checked
+against the US executables and archived profiles. All original files remain
+in the library, including Soulcalibur II's mirrored backup.

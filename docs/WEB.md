@@ -81,7 +81,9 @@ For a PSP, select **FTP** when adding the device, enter its host/port and
 username (`anonymous` by default), and use `/` as the remote root. Add a PS1
 location at `PSP/SAVEDATA` with the `.vmp` filter. Start FTP on the handheld,
 disconnect other FTP clients, and click **Scan now**; manual-only is the default.
-FTP locations are read-only sources. Valid scans are cached locally, failed
+FTP locations can allow writes in their settings; signed PSP VMP cards remain
+read-only. Uploads stage a temporary file, verify it, retain the remote original
+until replacement is verified, and keep a local backup. Valid scans are cached locally, failed
 scans retain the last inventory, and copies re-fetch the source before preview
 and apply so an offline cache is never silently used. Passwords remain in the
 private SQLite database and are omitted from API responses; an empty password
@@ -169,16 +171,19 @@ Copies and sync groups stay within their platform, even when save names match.
    in the preview, and apply. The app validates the images again, creates a
    verified backup, replaces the destination atomically, and queues a rescan.
 
-Use **Sync…** beside a save to opt into automatic sync across selected cards.
-Enabled groups scan their devices every five minutes, require two unchanged scans
-and at least 30 seconds of settling, then copy the changed save with a full
-destination-card backup. The Sync tab shows pending, blocked and conflict states.
-Different initial copies require choosing a source. Independently changed
-copies stop automatic writes until you choose one. Offline targets catch up
-from a persistent source snapshot when they return. Deletions are never
-propagated, and removed tracked saves are not silently recreated.
-This mode assumes one active gaming device at a time; it does not inspect
-emulator processes. Pause a group to suspend its automatic writes.
+Use **Sync memory cards…** in the Sync tab to group matching shared cards.
+Groups check every five minutes, require two stable scans at least 30 seconds
+apart, and replace the whole destination card after backing it up. New saves
+and deletions propagate together. Cards must have the same platform and capacity;
+PS2 raw/ECC encoding is converted to match each destination. Different starting
+cards or independent edits require choosing a source. Offline targets catch up
+from the persistent snapshot when they return. Pause a group to suspend writes.
+Each card belongs to at most one enabled group. A completely blank destination
+can be initialized from the selected source; a previously tracked card becoming
+unformatted blocks sync. Each group retains its current snapshot and two
+previous images, in addition to destination transfer backups. Old per-game groups are paused
+on upgrade; configure shared-card groups instead. This assumes one active gaming
+device at a time and does not inspect emulator processes.
 
 A failed location scan retains that location's complete previous inventory.
 Other reachable locations can still update, giving the device a partial
@@ -259,7 +264,7 @@ HTTP Basic authentication applies when `SAVE_MANAGER_TOKEN` is configured.
 A device may use the same folder for different systems when their file filters
 are disjoint. For PS3 FTP cards, set the device root to `/dev_hdd0/savedata/vmc`
 and create PS1 and PS2 locations with path `.`, filtering `.vm1` and `.vm2`
-respectively. FTP locations remain read-only sources.
+respectively. Enable writes for these locations to include them in card sync.
 
 | Method | Path | Body / result |
 | --- | --- | --- |
@@ -281,7 +286,7 @@ respectively. FTP locations remain read-only sources.
 | POST | `/api/transfers/preview` | `save_id`, `destination_card_id`, optional `conflict`: `stop`, `keep_both`, `replace`; internal slot copy additionally requires `source_slot`, `destination_slot` (1–12), supports only `stop`/`replace`; 201 preview |
 | POST | `/api/transfers/{id}/apply` | `cards_idle: true`; 200 completed transfer with backup path or null for identical content |
 | POST | `/api/transfers/{id}/cancel` | `{}`; cancel an unused preview |
-| POST | `/api/sync/groups` | `directory`, `card_ids` (2–32 writable cards); configure or replace a sync group |
+| POST | `/api/sync/groups` | `name`, `card_ids` (2–32 writable cards), optional `group_id` to edit; configure whole-card sync |
 | PUT | `/api/sync/groups/{id}` | `enabled`: pause/resume a configured group |
 | POST | `/api/sync/groups/{id}/resolve` | `source_card_id`: explicitly select a stable source copy |
 | POST | `/api/sync/groups/{id}/retry` | `{}`; scan now and retry blocked updates |
@@ -304,9 +309,9 @@ location inventory commits, and a unique active scan per device.
 ## Scope and next work
 
 This version supports mounted **PS1 raw 128 KiB** and **PS2 .ps2 / .bin** cards,
-including raw/ECC PS2 handling, plus read-only FTP acquisition and PSP `.vmp`
+including raw/ECC PS2 handling, plus verified FTP transfers and read-only PSP `.vmp`
 sources. VMP signing/writes, other headered PS1 containers, native PSP/Vita/PS3
-save formats and FTP uploads remain future work.
+save formats remain future work.
 
 ## Verification
 

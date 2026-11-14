@@ -165,7 +165,7 @@ class WebTest(unittest.TestCase):
     def test_sync_configuration_pause_and_source_selection_http(self):
         import time
         save, target = self.cards()
-        body = {'directory':save['directory'], 'card_ids':[save['card_id'],target['id']]}
+        body = {'name':'Shared card', 'card_ids':[save['card_id'],target['id']]}
         self.assertEqual(self.request('/api/sync/groups',body,'POST')[0],400)
         self.service.save_location(self.pc['id'],{'writable':True},self.pc_location['id'])
         status, group, _ = self.request('/api/sync/groups',body,'POST')

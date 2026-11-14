@@ -1,8 +1,10 @@
-"""Device connections and read-only FTP acquisition, separate from card formats."""
+"""Device connections and verified FTP transfers, separate from card formats."""
 
 from contextlib import contextmanager
 from ftplib import FTP, error_perm, all_errors
 import hashlib
+import io
+import uuid
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -77,7 +79,7 @@ def _ftp_call(device, command, *args, **kwargs):
             raise ValueError('FTP login rejected. Check the username and password.') from None
         if code=='550':
             raise FileNotFoundError('FTP folder or file is unavailable.') from None
-        raise OSError('FTP server rejected a read command.') from None
+        raise OSError('FTP server rejected a command.') from None
     except all_errors:
         # Do not expose server replies that might echo authentication data.
         raise OSError(f"FTP unavailable at {device['ftp_host']}:{device['ftp_port']}. Start FTP on the device and disconnect other clients.") from None
@@ -97,6 +99,15 @@ class FTPReader:
 
     def retrbinary(self, command, callback):
         return _ftp_call(self.device, self.ftp.retrbinary, command, callback)
+
+    def storbinary(self, command, source):
+        return _ftp_call(self.device, self.ftp.storbinary, command, source)
+
+    def rename(self, source, destination):
+        return _ftp_call(self.device, self.ftp.rename, str(source), str(destination))
+
+    def delete(self, path):
+        return _ftp_call(self.device, self.ftp.delete, str(path))
 
 
 @contextmanager
@@ -252,3 +263,64 @@ def ftp_source_file(device, location, filename, expected_hash, cache_root):
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
     return target
+
+
+def ftp_apply_copy(device, location, filename, plan, backup_root):
+    """Back up locally, stage remotely, then replace with a verified read-back.
+
+    Keep the original remote file under a unique name until verification passes.
+    Servers need STOR, RETR and RNFR/RNTO; live files are never truncated.
+    """
+    from save_core.save_copy import apply_copy, CopyApplyError
+    cache_file(Path('/'), filename)  # Validate before using a path in FTP commands.
+    remote = device_location_path(device, location) / PurePosixPath(filename)
+    suffix = '.save-manager-' + uuid.uuid4().hex
+    staged, previous = str(remote) + suffix + '.tmp', str(remote) + suffix + '.bak'
+    backup = None
+    moved = installed = False
+    try:
+        with ftp_connection(device) as ftp:
+            if download(ftp, remote) != plan.original:
+                raise ValueError('FTP destination changed since planning. Scan again.')
+            # apply_copy gives the cache the usual verified local backup and report.
+            backup = apply_copy(plan, backup_root)
+            if plan.action == 'Already identical':
+                return backup
+            try:
+                ftp.storbinary('STOR ' + staged, io.BytesIO(plan.candidate))
+                if download(ftp, PurePosixPath(staged)) != plan.candidate:
+                    raise ValueError('FTP staged card failed read-back verification.')
+                if download(ftp, remote) != plan.original:
+                    raise ValueError('FTP destination changed during upload; it was not replaced.')
+                ftp.rename(remote, previous)
+                moved = True
+                # Recheck the moved file to close the upload/rename observation gap.
+                if download(ftp, PurePosixPath(previous)) != plan.original:
+                    raise ValueError('FTP destination changed during replacement.')
+                ftp.rename(staged, remote)
+                installed = True
+                if download(ftp, remote) != plan.candidate:
+                    raise ValueError('FTP destination failed read-back verification.')
+            except Exception:
+                if moved and not installed:
+                    ftp.rename(previous, remote)
+                    moved = False
+                raise
+            finally:
+                if not installed:
+                    try:
+                        ftp.delete(staged)
+                    except (OSError, ValueError):
+                        pass
+            # A verified local backup already exists. Failure to remove the remote
+            # backup is harmless; its .bak extension keeps it out of card scans.
+            try:
+                ftp.delete(previous)
+            except (OSError, ValueError):
+                pass
+        return backup
+    except Exception as error:
+        if backup is not None:
+            recovery = f' Remote original retained at {previous}.' if moved else ''
+            raise CopyApplyError(str(error) + recovery, backup) from error
+        raise

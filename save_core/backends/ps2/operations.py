@@ -113,10 +113,10 @@ def plan_copy(source, record, destination, conflict='stop'):
             # When a decoder exists, require its known checksum/layout checks.
             if callable(getattr(plugin, 'validate_save', None)):
                 plugin.validate_save(record['save'], slot_data(plugin, record['save'], files(save)))
-            elif callable(getattr(plugin, 'payload_names', None)):
+            elif callable(getattr(plugin, 'slots', None)):
                 slots = plugin.slots(record['save'], slot_data(plugin, record['save'], files(save)))
                 if any(slot['state'] == 'invalid' for slot in slots):
-                    raise ValueError('Source validation failed: invalid save slots')
+                    raise ValueError('Source slot validation failed: invalid save slots')
             elif plugin:
                 decoded = plugin.decode(record['save'], files(save)[plugin.payload_name(record['save'])])
                 if not any(s.title == 'Progress' for s in decoded.sections):
@@ -192,6 +192,51 @@ def plan_copy(source, record, destination, conflict='stop'):
                     record['save'], name, action, candidate, original, tuple(warnings))
 
 
+def _write_slot_files(card, plugin, directory, source_save, source_payload, source_slot,
+                      destination_slot, original, candidate, before):
+    """Allow a plugin to add/rename one slot file while protecting its siblings."""
+    root = '/' + directory
+    old_name = plugin.slot_filename(original, destination_slot)
+    new_name = plugin.slot_filename(candidate, destination_slot)
+    source_name = plugin.slot_filename(source_payload, source_slot)
+    allowed = {old_name, new_name} - {None}
+    changed = {name for name in original.keys() | candidate.keys() if original.get(name) != candidate.get(name)}
+    if not new_name or not changed <= allowed:
+        raise ValueError('Candidate changed files outside the selected slot.')
+    for name in candidate:
+        if not name or len(name.encode('ascii')) > 32 or any(c in name for c in '/\\\0') or not isinstance(candidate[name], bytes):
+            raise ValueError('Invalid slot filename or contents.')
+    source_entry = next(entry for entry, _ in source_save if entry[8].decode('ascii') == source_name)
+    directory_entry = card.get_dirent(root)
+    expected = dict(before)
+    for name in original.keys() - candidate.keys():
+        card.remove(root + '/' + name)
+        del expected[root + '/' + name]
+    for name in changed & candidate.keys():
+        path = root + '/' + name
+        if name in original and len(candidate[name]) != len(original[name]):
+            raise ValueError('Candidate changed a slot file size.')
+        handle = card.open(path, 'r+b' if name in original else 'wb')
+        try:
+            handle.write(candidate[name], _set_modified=False)
+        finally:
+            handle.close()
+        if name not in original:
+            entry = list(card.get_dirent(path))
+            for index in (0,1,3,6,7):
+                entry[index] = source_entry[index]
+            card.set_dirent(path, entry)
+            metadata = tuple(entry[index] for index in (0,1,3,6,7,8))
+        else:
+            metadata = before[path][0]
+        expected[path] = (metadata, candidate[name])
+    entry = list(card.get_dirent(root))
+    for index in (0,1,3,6,7):
+        entry[index] = directory_entry[index]
+    card.set_dirent(root, entry)
+    return expected
+
+
 def plan_slot_copy(source, record, source_slot, destination, destination_slot, conflict='stop'):
     """Patch an internal slot in an existing save, preserving all other card data."""
     if conflict not in ('stop', 'replace'):
@@ -212,7 +257,8 @@ def plan_slot_copy(source, record, source_slot, destination, destination_slot, c
         try:
             if not card.check(allow_lost_clusters=True, warnings=warnings):
                 raise ValueError('Source filesystem check failed.')
-            source_payload = slot_data(plugin, name, files(simple_save(card, name)))
+            source_save = simple_save(card, name)
+            source_payload = slot_data(plugin, name, files(source_save))
         finally:
             card.close()
     with image_file(original, destination) as image:
@@ -237,19 +283,27 @@ def plan_slot_copy(source, record, source_slot, destination, destination_slot, c
             candidate_files = (candidate_payload if isinstance(candidate_payload, dict) else
                                {plugin.payload_name(name): candidate_payload})
             original_files = old_payload if isinstance(old_payload, dict) else {plugin.payload_name(name): old_payload}
-            if candidate_files.keys() != original_files.keys():
-                raise ValueError('Candidate changed the slot file set.')
-            for filename, payload in candidate_files.items():
-                if not isinstance(payload, bytes) or len(payload) != len(original_files[filename]):
-                    raise ValueError('Candidate changed a slot file size.')
-                if payload == original_files[filename]:
-                    continue
-                handle = card.open('/' + name + '/' + filename, 'r+b')
-                try:
-                    # Fixed-size overwrites retain allocation and container dates.
-                    handle.write(payload, _set_modified=False)
-                finally:
-                    handle.close()
+            if getattr(plugin, 'slot_file_changes', False):
+                expected = _write_slot_files(card, plugin, name, source_save, source_payload,
+                                             source_slot, destination_slot, original_files, candidate_files, before)
+            else:
+                if candidate_files.keys() != original_files.keys():
+                    raise ValueError('Candidate changed the slot file set.')
+                for filename, payload in candidate_files.items():
+                    if not isinstance(payload, bytes) or len(payload) != len(original_files[filename]):
+                        raise ValueError('Candidate changed a slot file size.')
+                    if payload == original_files[filename]:
+                        continue
+                    handle = card.open('/' + name + '/' + filename, 'r+b')
+                    try:
+                        # Fixed-size overwrites retain allocation and container dates.
+                        handle.write(payload, _set_modified=False)
+                    finally:
+                        handle.close()
+                expected = dict(before)
+                for filename, payload in candidate_files.items():
+                    path = '/' + name + '/' + filename
+                    expected[path] = (before[path][0], payload)
             if not card.check():
                 raise ValueError('Candidate filesystem check failed.')
         finally:
@@ -261,10 +315,6 @@ def plan_slot_copy(source, record, source_slot, destination, destination_slot, c
         card = ps2mc(image)
         try:
             after = tree_snapshot(card)
-            expected = dict(before)
-            for filename, payload in candidate_files.items():
-                path = '/' + name + '/' + filename
-                expected[path] = (before[path][0], payload)
             if after != expected or not card.check():
                 raise ValueError('Candidate changed another file, metadata, or planned slot data.')
             reopened = slot_data(plugin, name, files(simple_save(card, name)))

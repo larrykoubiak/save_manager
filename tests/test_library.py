@@ -49,7 +49,7 @@ class LibraryTest(unittest.TestCase):
         from test_save_copy import generic_save
         from test_save_merge import card_file
         names=('BASLUS-20573Config','BASLUS-20573SaIGbLlA')
-        card_file(self.cards[2],[generic_save(names[0],b'configuration'),generic_save('BASLUS-21227DBZT',b'US')],True)
+        card_file(self.cards[2],[generic_save(names[0],b'configuration'),generic_save('BASLUS-21227Test',b'US')],True)
         card_file(self.cards[3],[generic_save(names[1],b'career'),generic_save('BESLES-53200DBZT',b'EU')],True)
         self.case.scan(2);self.case.scan(3)
         games=self.service.library.inventory()['games']
@@ -83,6 +83,107 @@ class LibraryTest(unittest.TestCase):
         self.assertEqual(next(g for g in self.service.library.inventory()['games'] if g['game_key']=='SLUS-20573')['card_ports'],'port1')
         for save in merged['saves']:
             self.service.library.download(save['id'])
+
+    def ffix_game(self):
+        return next(g for g in self.service.library.inventory()['games'] if g['serial']=='SLUS-01251')
+
+    def test_same_slot_on_different_sources_keeps_independent_saves(self):
+        self.scan_ffix(0, 24137)
+        self.scan_ffix(1, 18581)
+        game = self.ffix_game()
+        self.assertEqual(len(game['saves']), 2)
+        self.assertEqual({s['playtime_seconds'] for s in game['saves']}, {24137, 18581})
+        self.assertTrue(all(s['revision_count']==1 for s in game['saves']))
+        self.scan_ffix(0, 25000)
+        game = self.ffix_game()
+        self.assertEqual(len(game['saves']), 2)
+        self.assertEqual(next(s['revision_count'] for s in game['saves'] if s['playtime_seconds']==25000), 2)
+        # A copy at another slot must not make the unrelated longer save history.
+        from game_plugins.ps1.ffix import FinalFantasyIXUS
+        source = SaveBundle(save_id(1), (SaveFile('data', ffix(18581)),))
+        moved = FinalFantasyIXUS.prepare_slot(source, 2)
+        self.cards[0].write_bytes(card_fixture([(moved.save_id,(1,),moved.files[0].data)]))
+        self.case.scan(0)
+        self.assertEqual(len(self.ffix_game()['saves']), 2)
+
+    def test_source_baseline_proves_revision_even_when_another_source_archived_it(self):
+        for day, index, seconds in ((15,0,1468),(16,1,1468),(17,1,2413)):
+            with patch('save_web.service.now', return_value=f'2026-11-{day:02}T12:00:00+00:00'):
+                self.scan_ffix(index, seconds)
+        game = self.ffix_game()
+        self.assertEqual(len(game['saves']), 1)
+        self.assertEqual([v['playtime_seconds'] for v in game['saves'][0]['revisions']], [2413,1468])
+
+    def test_bundle_fingerprints_match_recorded_source_observations(self):
+        for index, backend in ((0,'ps1'), (2,'ps2')):
+            bundle = get_backend(backend).read_save(self.cards[index], 'SAME')
+            record = self.service.db.one('SELECT sha256 FROM saves WHERE card_id=?', (self.case.ids[index],))
+            self.assertEqual(get_backend(backend).bundle_fingerprint(bundle), record['sha256'])
+
+    def test_library_lists_revisions_under_one_save(self):
+        self.scan_ffix(seconds=1468)
+        self.scan_ffix(seconds=2413)
+        game = self.ffix_game()
+        self.assertEqual(len(game['saves']), 1)
+        save = game['saves'][0]
+        self.assertEqual(save['playtime_seconds'], 2413)
+        self.assertEqual([v['playtime_seconds'] for v in save['revisions']], [2413, 1468])
+        self.assertEqual(save['revision_count'], 2)
+        for revision in save['revisions']:
+            self.service.library.download(revision['id'])
+
+    def test_relocated_saves_keep_identity_without_joining_displaced_saves(self):
+        from game_plugins.ps1.ffix import FinalFantasyIXUS
+        self.scan_ffix(seconds=1200)
+        def put(entries, day):
+            saves = []
+            for slot, seconds in entries:
+                source = SaveBundle(save_id(1), (SaveFile('data', ffix(seconds)),))
+                moved = FinalFantasyIXUS.prepare_slot(source, slot)
+                saves.append((moved.save_id, (len(saves)+1,), moved.files[0].data))
+            self.cards[0].write_bytes(card_fixture(saves))
+            with patch('save_web.service.now', return_value=f'2026-11-{day:02}T12:00:00+00:00'):
+                self.case.scan(0)
+        put([(1,1200),(2,24000),(3,1468)], 15)
+        before = self.ffix_game()
+        key = next(s['save_key'] for s in before['saves'] if s['playtime_seconds']==24000)
+        put([(1,24000),(2,22000),(3,1468),(4,1200)], 16)
+        put([(1,24000),(2,22000),(3,2413),(4,1200)], 17)
+        game = self.ffix_game()
+        self.assertEqual(len(game['saves']), 4)
+        moved = next(s for s in game['saves'] if s['playtime_seconds']==24000)
+        self.assertEqual(moved['save_key'], key)
+        self.assertEqual(moved['revision_count'], 1)
+        updated = next(s for s in game['saves'] if s['playtime_seconds']==2413)
+        self.assertEqual([v['playtime_seconds'] for v in updated['revisions']], [2413,1468])
+        self.assertEqual(get_backend('ps1').read_save(self.cards[0], save_id(1)).files[0].data,
+                         FinalFantasyIXUS.prepare_slot(SaveBundle(save_id(1),(SaveFile('data',ffix(24000)),)),1).files[0].data)
+        # Grouping is a read-only projection: all archived versions remain downloadable.
+        for slot in game['slots']:
+            for version in slot['versions']:
+                self.service.library.download(version['id'])
+
+    def test_ps2_relocated_slot_is_one_library_save(self):
+        from game_plugins.ps2.ar_tonelico import ArTonelicoUS
+        from test_save_merge import card_file
+        data = ar_fixture()
+        data = ArTonelicoUS.copy_slot(AR_DIRECTORY, data, 1, data, 12)
+        card_file(self.cards[2], [ar_save(data)], True)
+        self.case.scan(2)
+        game = next(g for g in self.service.library.inventory()['games'] if g['serial']=='SLUS-21445')
+        self.assertEqual(len(game['slots']), 3)
+        self.assertEqual(len(game['saves']), 2)
+        copied = next(s for s in game['saves'] if set(s['original_slots'])=={1,12})
+        self.assertEqual(copied['revision_count'], 1)
+        self.assertEqual(len(copied['sources']), 2)
+
+    def test_equal_playtime_does_not_merge_different_saves(self):
+        from game_plugins.ps1.ffix import FinalFantasyIXUS
+        a = ffix(3600,17)
+        b = FinalFantasyIXUS.prepare_slot(SaveBundle(save_id(1),(SaveFile('data',ffix(3600,18)),)),2)
+        self.cards[0].write_bytes(card_fixture([(save_id(1),(1,),a),(save_id(2),(2,),b.files[0].data)]))
+        self.case.scan(0)
+        self.assertEqual(len(self.ffix_game()['saves']), 2)
 
     def test_game_port_settings_are_isolated_and_survive_scans_and_restart(self):
         self.scan_ffix()

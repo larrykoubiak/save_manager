@@ -27,6 +27,24 @@ class PS1Backend:
     suffixes = ('.mcr','.mcd','.srm','.bin','.mem','.vm1','.vmc','.vmp')
     capabilities = BackendCapabilities(capacity=True,icons=True,delete=True,file_updates=True)
 
+    @staticmethod
+    def card_data(data):
+        raw = raw_image(data)
+        if len(raw) != SIZE:
+            raise ValueError('Expected a 128 KiB PS1 memory card.')
+        return raw
+
+    @staticmethod
+    def card_image(content, original):
+        if len(original) != SIZE or len(content) != SIZE:
+            raise ValueError('Signed and headered PS1 destinations are read-only.')
+        return content
+
+    @staticmethod
+    def bundle_fingerprint(bundle):
+        from save_core.save_merge import digest
+        return digest(bundle.file_data()['data'])
+
     def validate(self, data, name):
         Card(raw_image(data))
 
@@ -99,7 +117,7 @@ class PS1Backend:
                 raise ValueError('PS1 card changed during scan; retry when it is idle.')
             for record in records:
                 record['card_version'] = (stat.st_size,stat.st_mtime_ns)
-            result.append(dict(filename=filename,sha256=digest(data),size=stat.st_size,mtime_ns=stat.st_mtime_ns,
+            result.append(dict(filename=filename,sha256=digest(data),content_hash=digest(raw),size=stat.st_size,mtime_ns=stat.st_mtime_ns,
                                formatted=card is not None,total_blocks=120 if card else None,
                                free_blocks=len(card.free_blocks())*8 if card else None,saves=records))
         if paths()!=selected:

@@ -1,6 +1,7 @@
 """Common workflow for PS2 saves containing several internal save positions."""
 
 from ..library import LibrarySlot
+from .. import slot_data
 
 
 class InternalSlotsPlugin:
@@ -17,9 +18,17 @@ class InternalSlotsPlugin:
     invalid_destination_message = 'Destination contains invalid slots. Resolve them before copying.'
 
     @classmethod
+    def library_identity(cls, bundle, number):
+        """Use the same position-independent fingerprint verified during copies."""
+        data = slot_data(cls, bundle.save_id, bundle.file_data())
+        info = next(slot for slot in cls.slots(bundle.save_id, data) if slot['number'] == number)
+        if info['state'] != 'occupied':
+            raise ValueError('Cannot identify an empty or invalid save.')
+        return {'progress': bytes.fromhex(info['sha256'])}
+
+    @classmethod
     def library_slots(cls, bundle):
-        files = bundle.file_data()
-        data = files if callable(getattr(cls, 'payload_names', None)) else files[cls.payload_name(bundle.save_id)]
+        data = slot_data(cls, bundle.save_id, bundle.file_data())
         result = []
         for info in cls.slots(bundle.save_id, data):
             if info['state'] != 'occupied':

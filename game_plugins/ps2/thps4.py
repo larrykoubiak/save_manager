@@ -23,36 +23,37 @@ def crc(data):
     return zlib.crc32(data) ^ 0xffffffff
 
 
-def directory_for(name):
+def directory_for(name, prefix=PREFIX):
     value = crc(name.lower().encode('ascii'))
     suffix = ''
     for _ in range(7):
         value, remainder = divmod(value, 26)
         suffix += chr(97 + remainder)
-    return PREFIX + suffix + 'a'  # final letter selects career file type
+    return prefix + suffix + 'a'  # final letter selects career file type
 
 
-def career_info(directory, data):
-    if not THPS4CareerUS.supports(directory) or len(data) != SAVE_SIZE:
-        raise ValueError('Unsupported THPS4 US career layout.')
+def career_info(directory, data, plugin=None):
+    plugin = plugin or THPS4CareerUS
+    if not plugin.supports(directory) or len(data) != plugin.payload_size:
+        raise ValueError('Unsupported Tony Hawk US career layout.')
     stored, summary_crc, summary_size, used, version = struct.unpack_from('<5I', data)
-    if version != 24 or not 20 < 20 + summary_size < used <= len(data):
-        raise ValueError('Unsupported THPS4 career header.')
+    if version != plugin.save_version or not 20 < 20 + summary_size < used <= len(data):
+        raise ValueError('Unsupported Tony Hawk career header.')
     summary = data[20:20 + summary_size]
     if crc(summary) != summary_crc or crc(bytes(4) + data[4:used]) != stored:
-        raise ValueError('THPS4 career checksum mismatch.')
+        raise ValueError('Tony Hawk career checksum mismatch.')
     if summary.count(NAME_KEY) != 1:
-        raise ValueError('THPS4 career name field is missing or ambiguous.')
+        raise ValueError('Tony Hawk career name field is missing or ambiguous.')
     start = summary.index(NAME_KEY) + len(NAME_KEY)
     end = summary.find(b'\0', start)
     if end < 0 or summary[end:] != b'\0\0':
-        raise ValueError('Unsupported THPS4 career name encoding.')
+        raise ValueError('Unsupported Tony Hawk career name encoding.')
     try:
         name = summary[start:end].decode('ascii')
     except UnicodeDecodeError as error:
-        raise ValueError('Unsupported THPS4 career name encoding.') from error
-    if not re.fullmatch(r'[A-Za-z0-9 _-]{1,24}', name) or directory_for(name) != directory:
-        raise ValueError('THPS4 career name does not match its directory.')
+        raise ValueError('Unsupported Tony Hawk career name encoding.') from error
+    if not re.fullmatch(r'[A-Za-z0-9 _-]{1,24}', name) or directory_for(name, plugin.prefix) != directory:
+        raise ValueError('Tony Hawk career name does not match its directory.')
     return name, summary, start, end, used
 
 
@@ -95,10 +96,14 @@ def fullwidth(text):
 class THPS4CareerUS:
     name = "Tony Hawk's Pro Skater 4 career (US PS2)"
     payload_size = SAVE_SIZE
+    prefix = PREFIX
+    save_version = 24
+    icon_filename = 'thps4.ico'
+    icon_title = 'THPS4 Career:'
 
-    @staticmethod
-    def supports(directory):
-        return re.fullmatch(PREFIX + r'[a-z]{7}a', directory) is not None
+    @classmethod
+    def supports(cls, directory):
+        return re.fullmatch(cls.prefix + r'[a-z]{7}a', directory) is not None
 
     @staticmethod
     def payload_name(directory):
@@ -107,18 +112,18 @@ class THPS4CareerUS:
     @classmethod
     def decode(cls, directory, data):
         try:
-            name, summary, *_ = career_info(directory, data)
+            name, summary, *_ = career_info(directory, data, cls)
         except ValueError as error:
             return Breakdown(str(error), (), ())
         progress = progress_info(summary)
         fields = [('Career', name)]
         if progress:
             fields += [('Goals completed', str(progress['goals'])), ('Cash', f"${progress['cash']:,}")]
-        return Breakdown('THPS4 career checksums verified', (Section('Progress', tuple(fields)),), ())
+        return Breakdown('Tony Hawk career checksums verified', (Section('Progress', tuple(fields)),), ())
 
     @classmethod
     def summary(cls, directory, data):
-        name, summary, *_ = career_info(directory, data)
+        name, summary, *_ = career_info(directory, data, cls)
         progress = progress_info(summary)
         label = f'Career “{name}”'
         if progress:
@@ -128,44 +133,51 @@ class THPS4CareerUS:
         return {'summary': label}
 
     @classmethod
+    def library_slots(cls, bundle):
+        from ..library import LibrarySlot
+        summary = cls.summary(bundle.save_id, bundle.file_data()[bundle.save_id])['summary']
+        return [LibrarySlot('whole', None, summary,
+                            bundle.file_data())]
+
+    @classmethod
     def prepare_copy(cls, source: SaveBundle, occupied_directories):
         """Return a separately named career and its transfer action label."""
         directory = source.save_id
         files = source.file_data()
-        if len(source.files) != 3 or set(files) != {directory, 'icon.sys', 'thps4.ico'}:
-            raise ValueError('Unexpected THPS4 career file set.')
+        if len(source.files) != 3 or set(files) != {directory, 'icon.sys', cls.icon_filename}:
+            raise ValueError('Unexpected Tony Hawk career file set.')
         data = files[directory]
-        old_name, summary, start, end, used = career_info(directory, data)
+        old_name, summary, start, end, used = career_info(directory, data, cls)
         for number in range(2, 100):
             suffix = f' {number}'
             name = old_name[:8 - len(suffix)].rstrip() + suffix
-            new_directory = directory_for(name)
+            new_directory = directory_for(name, cls.prefix)
             if new_directory not in occupied_directories:
                 break
         else:
-            raise ValueError('No unused THPS4 career name remains.')
+            raise ValueError('No unused Tony Hawk career name remains.')
         new_summary = summary[:start] + name.encode('ascii') + summary[end:]
         body = data[20 + len(summary):used]
         new_used = 20 + len(new_summary) + len(body)
-        if new_used > SAVE_SIZE:
-            raise ValueError('Renamed THPS4 career exceeds its file size.')
+        if new_used > cls.payload_size:
+            raise ValueError('Renamed Tony Hawk career exceeds its file size.')
         payload = bytearray(data)
         payload[20:new_used] = new_summary + body
         struct.pack_into('<I', payload, 0, 0)
         struct.pack_into('<III', payload, 4, crc(new_summary), len(new_summary), new_used)
         struct.pack_into('<I', payload, 0, crc(payload[:new_used]))
-        checked_name, checked_summary, _, _, checked_used = career_info(new_directory, payload)
+        checked_name, checked_summary, _, _, checked_used = career_info(new_directory, payload, cls)
         if checked_name != name or payload[20 + len(checked_summary):checked_used] != body:
-            raise ValueError('Renamed THPS4 career verification failed.')
+            raise ValueError('Renamed Tony Hawk career verification failed.')
         icon = bytearray(files['icon.sys'])
         if len(icon) != 964 or icon[:4] != b'PS2D':
-            raise ValueError('Unsupported THPS4 icon metadata.')
+            raise ValueError('Unsupported Tony Hawk icon metadata.')
         title = icon[192:260].split(b'\0', 1)[0].decode('shift_jis')
-        if unicodedata.normalize('NFKC', title) != 'THPS4 Career:' + old_name:
-            raise ValueError('THPS4 icon title does not match the career name.')
-        new_title = fullwidth('THPS4 Career:' + name)
+        if unicodedata.normalize('NFKC', title) != cls.icon_title + old_name:
+            raise ValueError('Tony Hawk icon title does not match the career name.')
+        new_title = fullwidth(cls.icon_title + name)
         if len(new_title) >= 68:
-            raise ValueError('Renamed THPS4 icon title is too long.')
+            raise ValueError('Renamed Tony Hawk icon title is too long.')
         icon[192:260] = new_title.ljust(68, b'\0')
         result = replace(source, save_id=new_directory, files=tuple(
             replace(file, name=new_directory if file.name == directory else file.name,

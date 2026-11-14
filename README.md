@@ -33,7 +33,7 @@ and tunnel configuration.
 
 ## Features
 
-- Named devices with mounted folders or read-only FTP sources, manual scans or polling.
+- Named devices with mounted folders or FTP connections, manual scans or polling.
 - Separate system pages with their own sources, saves and sync groups; devices
   remain shared across systems.
 - Device-independent save library grouped by platform and game serial, with
@@ -56,8 +56,8 @@ and tunnel configuration.
 - FFX International/Undub: keep both copies using an unused native slot;
   the transformation has a user-confirmed physical-PS2 case.
 - Activity history and original-card backups.
-- Opt-in automatic sync per save across selected cards, with stable scans,
-  offline queues, conflict selection, and full card backups before writes.
+- Opt-in automatic sync of shared memory cards, with stable scans,
+  offline queues, conflict selection, raw/ECC conversion, and backups before writes.
 
 PSP `.VMP` containers can be read as sources; writing/signing them and native
 PSP/Vita/PS3 save formats remain future work.

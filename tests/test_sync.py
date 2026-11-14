@@ -24,13 +24,15 @@ class SyncTest(unittest.TestCase):
         for name in ('a','b','c'):
             path = self.root/name
             path.mkdir()
-            card_file(path/'card.ps2',[generic_save('GAME',b'initial'),generic_save('KEEP',name.encode())],True)
+            card_file(path/'card.ps2',[generic_save('GAME',b'initial'),generic_save('KEEP',b'a')],True)
+            if self.cards:
+                (path/'card.ps2').write_bytes(self.cards[0].read_bytes())
             device = self.service.create_device({'name':name})
             location = self.service.save_location(device['id'],{'name':name,'path':str(path),'writable':True})
             self.devices.append(device['id']);self.locations.append(location['id']);self.cards.append(path/'card.ps2')
             self.scan(len(self.devices)-1)
         self.ids = [self.service.db.one('SELECT id FROM cards WHERE location_id=?',(key,))['id'] for key in self.locations]
-        self.group = self.service.sync.configure({'directory':'GAME','card_ids':self.ids})
+        self.group = self.service.sync.configure({'name':'Shared card','card_ids':self.ids})
 
     def scan(self, index):
         job = self.service.queue_scan(self.devices[index])
@@ -50,7 +52,7 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.tick()['status'],'synced')
 
     def edit(self, index, payload):
-        card_file(self.cards[index],[generic_save('GAME',payload),generic_save('KEEP',chr(97+index).encode())],True)
+        card_file(self.cards[index],[generic_save('GAME',payload),generic_save('KEEP',b'a')],True)
 
     def payload(self, index):
         return snapshot(self.cards[index])['/GAME/data.bin'][1]
@@ -66,8 +68,8 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.tick()['status'],'pending')
         self.assertEqual([self.payload(i) for i in range(3)],[b'progress']*3)
         for index in range(3):
-            self.assertEqual(snapshot(self.cards[index])['/KEEP/data.bin'][1],chr(97+index).encode())
-        transfers = self.service.db.rows("SELECT * FROM transfers WHERE action='Automatic sync'")
+            self.assertEqual(snapshot(self.cards[index])['/KEEP/data.bin'][1],b'a')
+        transfers = self.service.db.rows("SELECT * FROM transfers WHERE action='Automatic card sync'")
         self.assertEqual(len(transfers),2)
         for transfer in transfers:
             index = self.ids.index(transfer['destination_card_id'])
@@ -118,13 +120,13 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.tick()['status'],'conflict')
         self.assertEqual(self.payload(2),b'offline progress')
 
-    def test_local_delete_is_not_propagated_or_silently_recreated(self):
+    def test_deletions_propagate_with_the_whole_card(self):
         self.initialize()
         card_file(self.cards[1],[generic_save('KEEP',b'b')],True)
         self.settle()
-        self.assertEqual(self.tick()['status'],'blocked')
-        self.assertNotIn('/GAME',snapshot(self.cards[1]))
-        self.assertEqual(self.payload(0),b'initial')
+        self.assertEqual(self.tick()['status'],'pending')
+        for card in self.cards:
+            self.assertNotIn('/GAME',snapshot(card))
 
     def test_full_readonly_and_changed_destination_do_not_overwrite(self):
         self.initialize()
@@ -133,7 +135,7 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.tick()['status'],'blocked')
         self.assertEqual(self.payload(1),b'initial')
         self.service.save_location(self.devices[1],{'writable':True},self.locations[1])
-        with patch('save_core.backends.ps2.PS2Backend.plan_copy',side_effect=ValueError('Not enough free space')):
+        with patch('save_web.sync.plan_card_copy',side_effect=ValueError('Conversion failed')):
             self.assertEqual(self.tick()['status'],'blocked')
         self.assertEqual(self.payload(1),b'initial')
         # Change a card after its scan: hash validation prevents a stale write.
@@ -157,7 +159,7 @@ class SyncTest(unittest.TestCase):
         self.edit(1,b'other')
         card_file(self.cards[2],[generic_save('KEEP',b'c')],True)
         self.settle()
-        self.group=self.service.sync.configure({'directory':'GAME','card_ids':self.ids})
+        self.group=self.service.sync.configure({'name':'Shared card','card_ids':self.ids,'group_id':self.group['id']})
         self.assertEqual(self.group['status'],'conflict')
         self.tick()
         self.assertEqual(self.payload(1),b'other')
@@ -176,11 +178,71 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.tick()['status'],'settling')
         self.assertEqual(self.payload(1),b'initial')
 
-    def test_unconfigured_saves_are_never_synced(self):
+    def test_new_saves_are_included_without_individual_configuration(self):
         self.initialize()
         card_file(self.cards[0],[generic_save('GAME',b'initial'),generic_save('UNTRACKED',b'private')],True)
         self.settle();self.tick()
-        self.assertNotIn('/UNTRACKED',snapshot(self.cards[1]))
+        self.assertIn('/UNTRACKED',snapshot(self.cards[1]))
+        self.assertNotIn('/KEEP',snapshot(self.cards[1]))
+
+    def test_overlapping_groups_and_legacy_save_configuration_are_rejected(self):
+        with self.assertRaisesRegex(ValueError,'another enabled'):
+            self.service.sync.configure({'name':'Overlapping','card_ids':self.ids[:2]})
+        with self.assertRaisesRegex(ValueError,'whole memory cards'):
+            self.service.sync.configure({'directory':'GAME','card_ids':self.ids[:2]})
+        self.service.sync.set_enabled(self.group['id'],{'enabled':False})
+        other = self.service.sync.configure({'name':'Replacement','card_ids':self.ids[:2]})
+        with self.assertRaisesRegex(ValueError,'another enabled'):
+            self.service.sync.set_enabled(self.group['id'],{'enabled':True})
+        self.assertTrue(self.service.sync.group(other['id'])['enabled'])
+
+    def test_corrupted_immutable_snapshot_is_not_dispatched(self):
+        self.initialize()
+        self.edit(0,b'new');self.settle()
+        members = self.service.sync.members(self.group)
+        group = self.service.sync.capture(self.group,members[0])
+        Path(group['snapshot']).write_bytes(self.cards[1].read_bytes())
+        self.assertEqual(self.tick()['status'],'blocked')
+        self.assertEqual(self.payload(1),b'initial')
+        self.assertIn('integrity',self.service.sync.group(group['id'])['message'])
+
+    def test_blank_target_can_be_initialized_but_a_later_erasure_blocks_sync(self):
+        self.service.sync.set_enabled(self.group['id'],{'enabled':False})
+        self.cards[1].write_bytes(b'\xff' * self.cards[1].stat().st_size)
+        self.settle()
+        group = self.service.sync.configure({'name':'Initialize blank','card_ids':self.ids[:2]})
+        self.service.sync.next_tick=0;self.service.sync.tick()
+        self.assertEqual(self.payload(1),b'initial')
+        self.settle();self.service.sync.next_tick=0;self.service.sync.tick()
+        self.cards[1].write_bytes(b'\xff' * self.cards[1].stat().st_size)
+        self.settle();self.service.sync.next_tick=0;self.service.sync.tick()
+        self.assertEqual(self.service.sync.group(group['id'])['status'],'blocked')
+        self.assertEqual(self.cards[1].read_bytes(),b'\xff' * self.cards[1].stat().st_size)
+
+    def test_snapshot_history_keeps_current_and_two_previous_cards(self):
+        self.initialize()
+        for number in range(4):
+            self.edit(0, f'progress {number}'.encode());self.settle();self.tick()
+            self.settle();self.tick()
+        group = self.service.sync.group(self.group['id'])
+        snapshots = list(Path(group['snapshot']).parent.glob('*.bin'))
+        self.assertEqual(len(snapshots),3)
+        self.assertIn(Path(group['snapshot']),snapshots)
+        self.assertTrue(self.service.db.rows("SELECT backup FROM transfers WHERE status='done' AND backup IS NOT NULL"))
+
+    def test_written_card_waits_for_confirmation_instead_of_recapturing_stale_inventory(self):
+        self.initialize()
+        self.edit(0,b'latest');self.scan(0);self.scan(0)
+        group = self.tick()
+        self.assertEqual(group['status'],'pending')
+        accepted = group['head_hash']
+        transfers = self.service.db.rows('SELECT id FROM transfers')
+        self.assertEqual(self.tick()['status'],'pending')
+        self.assertEqual(self.service.sync.group(group['id'])['head_hash'],accepted)
+        self.assertEqual(self.service.db.rows('SELECT id FROM transfers'),transfers)
+        self.assertEqual([self.payload(i) for i in range(3)],[b'latest']*3)
+        self.settle()
+        self.assertEqual(self.tick()['status'],'synced')
 
     def test_changed_source_after_scan_is_not_captured(self):
         self.initialize()

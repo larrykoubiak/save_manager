@@ -97,7 +97,7 @@ class Database:
         self.path.chmod(0o600)
         with self.connect() as db:
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 16:
+            if version > 17:
                 raise ValueError('This database requires a newer Save Manager.')
             db.execute('PRAGMA journal_mode=WAL')
             db.executescript(SCHEMA + LIBRARY_SCHEMA)
@@ -196,7 +196,20 @@ class Database:
                 db.execute('CREATE UNIQUE INDEX active_location_path ON locations(device_id,path,backend) WHERE deleted=0')
             if version < 14:
                 regroup_games(db)
-            db.execute('PRAGMA user_version=16')
+            columns = {row[1] for row in db.execute('PRAGMA table_info(cards)')}
+            if 'content_hash' not in columns:
+                db.execute('ALTER TABLE cards ADD COLUMN content_hash TEXT')
+            columns = {row[1] for row in db.execute('PRAGMA table_info(sync_groups)')}
+            for name, definition in (('scope', "TEXT NOT NULL DEFAULT 'save'"), ('label', "TEXT NOT NULL DEFAULT ''")):
+                if name not in columns:
+                    db.execute(f'ALTER TABLE sync_groups ADD COLUMN {name} {definition}')
+            columns = {row[1] for row in db.execute('PRAGMA table_info(sync_members)')}
+            if 'pending_scan' not in columns:
+                db.execute('ALTER TABLE sync_members ADD COLUMN pending_scan INTEGER NOT NULL DEFAULT 0')
+                db.execute("UPDATE sync_members SET pending_scan=1 WHERE status='pending' AND message='Written; awaiting scan.'")
+            if version < 17:
+                db.execute("UPDATE sync_groups SET enabled=0,status='paused',message='Per-game sync replaced by whole-card sync.',updated=datetime('now') WHERE scope='save'")
+            db.execute('PRAGMA user_version=17')
 
     @contextmanager
     def connect(self):

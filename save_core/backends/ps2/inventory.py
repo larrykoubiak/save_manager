@@ -15,6 +15,17 @@ from .native.ps2iconsys import IconSys
 from save_core.storage_paths import location_root, card_path
 
 
+def tree_fingerprint(tree, prefix):
+    """Hash logical save contents in the same form as source observations."""
+    hashed = hashlib.sha256()
+    for name, (_, contents) in sorted(tree.items()):
+        if name == prefix or name.startswith(prefix + '/'):
+            relative = name[len(prefix):].encode('utf-8')
+            hashed.update(len(relative).to_bytes(4, 'big') + relative)
+            hashed.update(b'D' if contents is None else b'F' + len(contents).to_bytes(8, 'big') + contents)
+    return hashed.hexdigest()
+
+
 def snapshot_location(location):
     root = location_root(location)
     suffix = location['suffix']
@@ -62,13 +73,7 @@ def snapshot_location(location):
                     card.close()
             for record in card_records:
                 prefix = '/' + record['save']
-                hashed = hashlib.sha256()
-                for name, (_, contents) in sorted(tree.items()):
-                    if name == prefix or name.startswith(prefix + '/'):
-                        relative = name[len(prefix):].encode('utf-8')
-                        hashed.update(len(relative).to_bytes(4, 'big') + relative)
-                        hashed.update(b'D' if contents is None else b'F' + len(contents).to_bytes(8, 'big') + contents)
-                record['sha256'] = hashed.hexdigest()
+                record['sha256'] = tree_fingerprint(tree, prefix)
                 record['slots'] = []
                 plugin = plugin_for(record['save'])
                 if callable(getattr(plugin, 'slots', None)):
@@ -103,7 +108,8 @@ def snapshot_location(location):
         after = path.stat()
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise ValueError('Card changed during scan; retry when it is idle.')
-        result.append(dict(filename=path.name, sha256=digest(data), size=after.st_size,
+        result.append(dict(filename=path.name, sha256=digest(data),
+                           content_hash=digest(PS2Backend.card_data(data)), size=after.st_size,
                            mtime_ns=after.st_mtime_ns, formatted=usage['formatted'],
                            total_blocks=usage.get('total_blocks'), free_blocks=usage.get('free_blocks'),
                            saves=card_records))

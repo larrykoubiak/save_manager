@@ -20,9 +20,15 @@ def inspect_save(card_path, record, side):
                 (entry[8].decode('ascii'), f'{entry[2]:,} bytes' if mode_is_file(entry[0]) else 'Directory')
                 for entry in contents))
             plugin = plugin_for(record['save'])
-            if callable(getattr(plugin, 'payload_names', None)):
+            if callable(getattr(plugin, 'slots', None)) and not callable(getattr(plugin, 'decode', None)):
                 data = {}
-                for name in plugin.payload_names(record['save']):
+                if callable(getattr(plugin, 'payload_names', None)):
+                    names = plugin.payload_names(record['save'])
+                elif callable(getattr(plugin, 'select_files', None)):
+                    names = tuple(entry[8].decode('ascii') for entry in contents if mode_is_file(entry[0]))
+                else:
+                    names = (plugin.payload_name(record['save']),)
+                for name in names:
                     if not any(entry[8] == name.encode('ascii') and mode_is_file(entry[0]) for entry in contents):
                         continue
                     payload = card.open(directory + '/' + name, 'rb')

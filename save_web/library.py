@@ -12,6 +12,7 @@ import zipfile
 
 from game_plugins.library import extract_slots
 from game_plugins import plugin_for
+from save_core.backends import get_backend
 from save_core.backends.serialization import bundle_manifest, read_bundle
 from save_core.save_games import game_serial, fallback_title
 
@@ -249,7 +250,8 @@ class SaveLibrary:
             current = db.execute('SELECT * FROM library_versions WHERE id=?', (entry['current_version_id'],)).fetchone()
             version = db.execute('SELECT * FROM library_versions WHERE slot_id=? AND content_hash=? ORDER BY id DESC LIMIT 1',
                                  (entry['id'],content_hash)).fetchone()
-            if version is not None and (slot.playtime_seconds is not None or slot.number is not None):
+            if version is not None and (slot.playtime_seconds is not None or slot.number is not None or
+                                        callable(getattr(plugin_for(bundle.save_id, backend), 'library_slots', None))):
                 db.execute('UPDATE library_versions SET label=?,playtime_seconds=COALESCE(?,playtime_seconds) WHERE id=?',
                            (slot.label,slot.playtime_seconds,version['id']))
             source_changed = source is not None and source['content_hash']!=content_hash
@@ -309,30 +311,96 @@ class SaveLibrary:
             slot['versions'] = [v for v in versions if v['slot_id']==slot['id']]
             slot['sources'] = [s for s in sources if s['slot_id']==slot['id']]
             slot['current'] = next((v for v in slot['versions'] if v['id']==slot['current_version_id']),None)
+        observations = {(row['save_id'], row['sha256']): row['first_seen']
+                        for row in db.execute('SELECT save_id,sha256,first_seen FROM save_versions')}
         for game in games:
             game['serial'] = game_serial(game['game_key'])
             game['slots'] = [slot for slot in slots if slot['game_id']==game['id']]
-            distinct = {}
-            for lineage in game['slots']:
-                for version in lineage['versions']:
-                    # Keep original whole-save backups in history without listing
-                    # them again beside the individual saves extracted from them.
-                    if lineage['number'] is None and lineage['slot_key'].endswith(':whole') and version['id'] in indexed_versions:
-                        continue
-                    entry = distinct.setdefault(version['content_hash'],{**version,'sources':[],'original_slots':[]})
-                    if lineage['number'] is not None and lineage['number'] not in entry['original_slots']:
-                        entry['original_slots'].append(lineage['number'])
-                    for source in lineage['sources']:
-                        if source['content_hash']==version['content_hash']:
-                            origin = {**source,'original_slot':lineage['number']}
-                            if origin not in entry['sources']:
-                                entry['sources'].append(origin)
-            game['saves'] = sorted(distinct.values(),key=lambda entry:entry['id'],reverse=True)
+            game['saves'] = self.group_revisions(game, indexed_versions, observations)
         errors = [dict(row) for row in db.execute('''SELECT e.save_id,e.error,e.last_seen,l.backend,d.name device,c.filename,s.directory
             FROM library_errors e JOIN saves s ON s.id=e.save_id JOIN cards c ON c.id=s.card_id
             JOIN locations l ON l.id=c.location_id JOIN devices d ON d.id=l.device_id WHERE l.deleted=0''')]
         previous = db.execute('SELECT previous_versions FROM library_settings WHERE id=1').fetchone()[0]
         return dict(games=games,errors=errors,previous_versions=previous)
+
+    def group_revisions(self, game, indexed_versions, observations):
+        """Present save identities separately from their historical card positions.
+
+        Exact, plugin-normalized copies follow their original identity. A new
+        payload follows a preceding revision observed on the same source, unless that
+        preceding save was observed at another position in the meantime.
+        No similarity or playtime heuristic is used to match different payloads.
+        All original versions and source associations remain untouched.
+        """
+        versions, positions, fingerprints, bundle_hashes = [], {}, {}, {}
+        backend = get_backend(game['backend'])
+        for lineage in game['slots']:
+            for version in lineage['versions']:
+                if lineage['number'] is None and lineage['slot_key'].endswith(':whole') and version['id'] in indexed_versions:
+                    continue
+                entry = {**version, 'sources': [], 'original_slots': []}
+                if lineage['number'] is not None:
+                    entry['original_slots'].append(lineage['number'])
+                entry['sources'] = [{**source, 'original_slot': lineage['number']}
+                                    for source in lineage['sources']
+                                    if source['content_hash'] == version['content_hash']]
+                fingerprint = version['content_hash']
+                plugin = plugin_for(version['directory'], game['backend'])
+                normalize = getattr(plugin, 'library_identity', None) if lineage['number'] is not None else None
+                try:
+                    bundle = read_bundle(self.objects.load(version['bundle_hash']), self.objects.get)
+                    bundle_hashes[version['id']] = backend.bundle_fingerprint(bundle)
+                    if normalize:
+                        files = normalize(bundle, lineage['number'])
+                        fingerprint = hashlib.sha256(json_bytes([
+                            (name, hashlib.sha256(data).hexdigest()) for name, data in sorted(files.items())
+                        ])).hexdigest()
+                except (ValueError, KeyError, OSError):
+                    # Unrecognized old formats still retain their own history.
+                    pass
+                # Only adapters that define relocation equivalence may join positions.
+                if not normalize:
+                    fingerprint = (lineage['id'], fingerprint)
+                fingerprints[version['id']] = fingerprint
+                positions.setdefault(fingerprint, []).append((version['created'], lineage['id']))
+                versions.append(entry)
+        groups, identities, previous = {}, {}, {}
+        for version in sorted(versions, key=lambda v: (v['created'], v['id'])):
+            fingerprint = fingerprints[version['id']]
+            identity = identities.get(fingerprint)
+            old = next((candidate for candidate in reversed(previous.get(version['slot_id'], []))
+                        if candidate['source_save_id'] == version['source_save_id'] or
+                        observations.get((version['source_save_id'], bundle_hashes.get(candidate['id'])),
+                                         version['created']) < version['created']), None)
+            if identity is None:
+                relocated = old and any(old['created'] < time <= version['created'] and position != version['slot_id']
+                                        for time, position in positions[fingerprints[old['id']]])
+                identity = old['identity'] if old and not relocated else version['id']
+                identities[fingerprint] = identity
+            version['identity'] = identity
+            previous.setdefault(version['slot_id'], []).append(version)
+            group = groups.setdefault(identity, {})
+            # Collapse byte differences due solely to relocation into one revision.
+            revision = group.get(fingerprint)
+            if revision is None:
+                group[fingerprint] = version
+            else:
+                if (version['created'], version['id']) > (revision['created'], revision['id']):
+                    version['sources'] += [s for s in revision['sources'] if s not in version['sources']]
+                    version['original_slots'] = sorted(set(version['original_slots'] + revision['original_slots']))
+                    group[fingerprint] = version
+                else:
+                    revision['sources'] += [s for s in version['sources'] if s not in revision['sources']]
+                    revision['original_slots'] = sorted(set(revision['original_slots'] + version['original_slots']))
+        heads = {s['current_version_id'] for s in game['slots']}
+        head_fingerprints = {fingerprints[key] for key in heads if key in fingerprints}
+        saves = []
+        for identity, revisions in groups.items():
+            ordered = sorted(revisions.values(), key=lambda v: (v['created'], v['id']), reverse=True)
+            current = next((v for v in ordered if fingerprints[v['id']] in head_fingerprints), ordered[0])
+            saves.append({**current, 'save_key': str(identity),
+                          'revisions': ordered, 'revision_count': len(ordered)})
+        return sorted(saves, key=lambda v: (v['created'], v['id']), reverse=True)
 
     def game_settings(self, game_id, body):
         with self.service.lock:

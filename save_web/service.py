@@ -12,7 +12,7 @@ from save_core.backends import get_backend, backend_info
 from save_core.save_merge import digest, stable_read
 from .database import Database
 from .inventory import card_path, snapshot_location
-from .transports import connection_values, public_device, device_location_path, ftp_snapshot, ftp_source_file
+from .transports import connection_values, public_device, device_location_path, ftp_snapshot, ftp_source_file, ftp_apply_copy
 
 
 def now():
@@ -79,8 +79,6 @@ class Service:
                 if moved:
                     db.execute("UPDATE locations SET status='never',error=NULL WHERE device_id=?", (key,))
                     db.execute("UPDATE devices SET status='never',error=NULL WHERE id=?", (key,))
-                if connection['transport']=='ftp':
-                    db.execute('UPDATE locations SET writable=0 WHERE device_id=?', (key,))
         return public_device(self.db.one('SELECT * FROM devices WHERE id=?', (key,)))
 
     def _check_location_path(self, path, key=None, device=None, backend_id=None, suffix=None):
@@ -128,8 +126,6 @@ class Service:
             writable = values.get('writable', False)
             if not isinstance(writable, (bool, int)) or writable not in (0, 1):
                 raise ValueError('Writable must be true or false.')
-            if device['transport']=='ftp' and writable:
-                raise ValueError('FTP locations are read-only sources for now.')
             if writable and suffix=='.vmp':
                 raise ValueError('PSP VMP cards are read-only until signing support is added.')
             self._check_location_path(path,key,device,backend_id,suffix)
@@ -211,17 +207,16 @@ class Service:
                             JOIN cards c ON c.id=s.card_id JOIN locations l ON l.id=c.location_id WHERE s.present=1 AND c.present=1 AND l.deleted=0
                             ORDER BY p.save_id,p.number''',
                 'transfers': '''SELECT t.*,c.filename destination_filename FROM transfers t JOIN cards c ON c.id=t.destination_card_id ORDER BY t.created DESC LIMIT 50''' ,
-                'sync_groups': 'SELECT * FROM sync_groups WHERE EXISTS(SELECT 1 FROM sync_members m WHERE m.group_id=sync_groups.id) ORDER BY directory',
+                'sync_groups': "SELECT * FROM sync_groups WHERE scope='card' AND EXISTS(SELECT 1 FROM sync_members m WHERE m.group_id=sync_groups.id) ORDER BY label",
                 'sync_members': 'SELECT * FROM sync_members ORDER BY group_id,card_id',
             }.items()}
             result['library'] = self.library.inventory(db)
         result['backends'] = backend_info()
         from game_plugins import plugin_for
         locations = {location['id']: location for location in result['locations']}
-        devices = {device['id']: device for device in result['devices']}
         for card in result['cards']:
             location = locations[card['location_id']]
-            card['read_only'] = devices[location['device_id']]['transport']=='ftp' or (location['backend']=='ps1' and card['filename'].lower().endswith('.vmp'))
+            card['read_only'] = location['backend']=='ps1' and card['filename'].lower().endswith('.vmp')
         cards = {card['id']: card for card in result['cards']}
         for save in result['saves']:
             backend = locations[cards[save['card_id']]['location_id']]['backend']
@@ -253,13 +248,14 @@ class Service:
             db.execute('UPDATE cards SET present=0 WHERE location_id=?', (location_id,))
             db.execute('UPDATE saves SET present=0 WHERE card_id IN (SELECT id FROM cards WHERE location_id=?)', (location_id,))
             for card in cards:
-                db.execute('''INSERT INTO cards(location_id,filename,sha256,size,mtime_ns,formatted,total_blocks,free_blocks,last_seen)
-                              VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(location_id,filename) DO UPDATE SET
+                db.execute('''INSERT INTO cards(location_id,filename,sha256,size,mtime_ns,formatted,total_blocks,free_blocks,last_seen,content_hash)
+                              VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(location_id,filename) DO UPDATE SET
                               sha256=excluded.sha256,size=excluded.size,mtime_ns=excluded.mtime_ns,formatted=excluded.formatted,
-                              total_blocks=excluded.total_blocks,free_blocks=excluded.free_blocks,last_seen=excluded.last_seen,present=1''',
+                              total_blocks=excluded.total_blocks,free_blocks=excluded.free_blocks,last_seen=excluded.last_seen,content_hash=excluded.content_hash,present=1''',
                            (location_id, card['filename'], card['sha256'], card['size'], card['mtime_ns'], card['formatted'],
-                            card['total_blocks'], card['free_blocks'], timestamp))
+                            card['total_blocks'], card['free_blocks'], timestamp, card.get('content_hash')))
                 card_id = db.execute('SELECT id FROM cards WHERE location_id=? AND filename=?', (location_id, card['filename'])).fetchone()[0]
+                db.execute('UPDATE sync_members SET pending_scan=0 WHERE card_id=?', (card_id,))
                 observed = time.time()
                 db.execute('''INSERT INTO sync_observations(card_id,sha256,since,checked,checks) VALUES (?,?,?,?,1)
                               ON CONFLICT(card_id) DO UPDATE SET
@@ -379,8 +375,6 @@ class Service:
         location = {**location,'transport':device['transport'],'ftp_host':device['ftp_host'],
                     'ftp_port':device['ftp_port'],'device_name':device['name']}
         if device['transport']=='ftp':
-            if writable:
-                raise ValueError('FTP locations are read-only sources for now.')
             try:
                 path = ftp_source_file(device,location,card['filename'],card['sha256'],self.data_dir/'ftp-cache')
             except (OSError,ValueError) as error:
@@ -397,6 +391,12 @@ class Service:
         if digest(stable_read(path)) != card['sha256']:
             raise ValueError('Card changed since its last scan. Scan the device and preview again.')
         return card, location, path
+
+    def apply_plan(self, plan, card, location):
+        if location.get('transport') == 'ftp':
+            device = self.db.one('SELECT * FROM devices WHERE id=?', (location['device_id'],))
+            return ftp_apply_copy(device, location, card['filename'], plan, self.data_dir/'backups')
+        return apply_copy(plan, self.data_dir/'backups')
 
     def _expire_previews(self):
         expired = [key for key, item in self.previews.items() if item[0] < time.monotonic()]
@@ -468,10 +468,10 @@ class Service:
                 db.execute("UPDATE transfers SET status='applying' WHERE id=?", (key,))
             try:
                 _, _, source_path = self._card(transfer['source_card_id'])
-                _, destination_location, destination_path = self._card(transfer['destination_card_id'], writable=True)
+                destination_card, destination_location, destination_path = self._card(transfer['destination_card_id'], writable=True)
                 if source_path != plan.source or destination_path != plan.destination:
                     raise ValueError('A location changed since preview. Scan and preview again.')
-                backup = apply_copy(plan, self.data_dir / 'backups')
+                backup = self.apply_plan(plan, destination_card, destination_location)
             except Exception as error:
                 with self.db.connect() as db:
                     db.execute("UPDATE transfers SET status='failed',finished=?,error=?,backup=? WHERE id=?", (now(), str(error), getattr(error, 'backup', None), key))

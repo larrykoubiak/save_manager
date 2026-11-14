@@ -176,6 +176,7 @@ input::placeholder { color: #8d9db8; opacity: 1; }
 .saved-icon { width: 44px; height: 44px; object-fit: contain; }
 .saved-table td { vertical-align: top; }
 .saved-table small { display: block; color: var(--muted); margin: 4px 0; }
+.save-revision { margin: 8px 0 8px 12px; }
 .saved-table a { color: #accfff; }
 .library-version { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .library-settings input { width: 70px; }

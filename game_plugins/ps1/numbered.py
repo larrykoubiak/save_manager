@@ -115,6 +115,15 @@ class NumberedSavePlugin:
                             cls.summary(bundle.save_id, data)['summary'], {'data': data}, cls.playtime_seconds(data))]
 
     @classmethod
+    def library_identity(cls, bundle, number=None):
+        """Compare progress independently of the filename and numbered preview.
+
+        Normalize through the same validated relocation path used for copies;
+        never alter the archived bundle or its checksum.
+        """
+        return cls.prepare_slot(bundle, 1).file_data()
+
+    @classmethod
     def prepare_slot(cls, source, destination_slot):
         layout = cls.layout
         if type(destination_slot) is not int or not 1 <= destination_slot <= len(layout.suffixes):
