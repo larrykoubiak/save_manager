@@ -41,3 +41,11 @@ Chrono Cross US slot IDs, preview offsets and byte-sum checksum were
 cross-checked against [RyudoSynbios's Game Tools Collection](https://github.com/RyudoSynbios/game-tools-collection)
 and private saves. The Python adapter is implemented from those format facts;
 no editor code or game-data tables from that project are bundled.
+
+PSP VMP signature derivation in `save_core/backends/ps1/vmp.py` follows
+[dots-tb's vita-mcr2vmp](https://github.com/dots-tb/vita-mcr2vmp/blob/master/src/main.c)
+and [Bucanero's psv_resign.c](https://github.com/bucanero/ps2vmc-tool/blob/main/src/psv_resign.c),
+under GPLv3 or later. The Python adapter preserves the destination header and
+uses PyCryptodome for AES and Python's standard library for HMAC-SHA1. Known
+answers were cross-checked with the independent C converter; its source and
+executable are not bundled.

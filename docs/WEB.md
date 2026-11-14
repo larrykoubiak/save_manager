@@ -81,8 +81,8 @@ For a PSP, select **FTP** when adding the device, enter its host/port and
 username (`anonymous` by default), and use `/` as the remote root. Add a PS1
 location at `PSP/SAVEDATA` with the `.vmp` filter. Start FTP on the handheld,
 disconnect other FTP clients, and click **Scan now**; manual-only is the default.
-FTP locations can allow writes in their settings; signed PSP VMP cards remain
-read-only. Uploads stage a temporary file, verify it, retain the remote original
+FTP locations can allow writes in their settings, including signed PSP VMP cards.
+Uploads stage a temporary file, verify it, retain the remote original
 until replacement is verified, and keep a local backup. Valid scans are cached locally, failed
 scans retain the last inventory, and copies re-fetch the source before preview
 and apply so an offline cache is never silently used. Passwords remain in the
@@ -127,8 +127,9 @@ On a system page, **Add PS1/PS2 location…** fixes the system and asks for a
 shared device and a new folder. The global Devices page can configure either
 system. Then choose an extension or **All supported card files**.
 PS1 currently reads raw 128 KiB card images, commonly `.mcr`, `.mcd`
-and RetroArch `.srm`. PSP `.vmp` containers are read-only sources: their 128-byte
-header is preserved, but signatures are not verified or regenerated yet.
+and RetroArch `.srm`. PSP `.vmp` containers preserve their 128-byte header and
+regenerate the signature after writes. The signer is checked against the
+independent vita-mcr2vmp converter.
 Other headered formats such as `.gme` are not supported.
 Cards must already be formatted. PS1 has 15 usable 8 KiB blocks; capacity and save
 sizes are displayed in KiB. PS1 does not store save timestamps. Bitmap icons use
@@ -184,6 +185,13 @@ unformatted blocks sync. Each group retains its current snapshot and two
 previous images, in addition to destination transfer backups. Old per-game groups are paused
 on upgrade; configure shared-card groups instead. This assumes one active gaming
 device at a time and does not inspect emulator processes.
+
+Use **Sync a PSP game…** to link a game’s `SCEVMC0.VMP` to the shared-card
+group containing its saves. This prepares a dedicated PSP game card and
+tracks only that game’s payloads in each direction. Other shared-card games
+remain untouched; different PSP games can be played offline before reconnecting.
+Changing the same game on both sides requires choosing a source. Links have
+pause, retry and source-selection controls. FTP must be running for updates.
 
 A failed location scan retains that location's complete previous inventory.
 Other reachable locations can still update, giving the device a partial
@@ -286,6 +294,9 @@ respectively. Enable writes for these locations to include them in card sync.
 | POST | `/api/transfers/preview` | `save_id`, `destination_card_id`, optional `conflict`: `stop`, `keep_both`, `replace`; internal slot copy additionally requires `source_slot`, `destination_slot` (1–12), supports only `stop`/`replace`; 201 preview |
 | POST | `/api/transfers/{id}/apply` | `cards_idle: true`; 200 completed transfer with backup path or null for identical content |
 | POST | `/api/transfers/{id}/cancel` | `{}`; cancel an unused preview |
+| POST | `/api/sync/games` | `game_key` (serial), `group_id`, `portable_card_id`, optional `initial_source`: `shared` or `portable`; create a PSP per-game link |
+| PUT | `/api/sync/games/{id}` | `enabled`, `source`: `shared` or `portable`, or `{}` to retry |
+| DELETE | `/api/sync/games/{id}` | remove the link; saves and backups remain |
 | POST | `/api/sync/groups` | `name`, `card_ids` (2–32 writable cards), optional `group_id` to edit; configure whole-card sync |
 | PUT | `/api/sync/groups/{id}` | `enabled`: pause/resume a configured group |
 | POST | `/api/sync/groups/{id}/resolve` | `source_card_id`: explicitly select a stable source copy |
@@ -299,7 +310,7 @@ the scan has succeeded. A transfer that fails after preview records its
 error in transfer history. IDs are server-owned: requests cannot supply
 arbitrary source or destination filenames for transfers.
 
-Schema version 10 uses `PRAGMA user_version`; older inventories migrate
+Schema version 18 uses `PRAGMA user_version`; older inventories migrate
 automatically, including per-location platforms, platform-specific sync groups,
 per-card baselines and stable observations.
 Existing inventory/history is retained. A newer database is rejected.
@@ -309,8 +320,8 @@ location inventory commits, and a unique active scan per device.
 ## Scope and next work
 
 This version supports mounted **PS1 raw 128 KiB** and **PS2 .ps2 / .bin** cards,
-including raw/ECC PS2 handling, plus verified FTP transfers and read-only PSP `.vmp`
-sources. VMP signing/writes, other headered PS1 containers, native PSP/Vita/PS3
+including raw/ECC PS2 handling, verified FTP transfers, and signed PSP `.vmp`
+read/write support. Other headered PS1 containers and native PSP/Vita/PS3
 save formats remain future work.
 
 ## Verification

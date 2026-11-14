@@ -280,6 +280,12 @@ function renderCards() {
   }).join('') || '<div class="empty">No cards discovered yet. Add a location and scan this device.</div>';
 }
 function renderSync() {
+  $('#new-game-sync').hidden = activeSystem !== 'ps1';
+  $('#game-sync-links').innerHTML = activeSystem === 'ps1' ? (data.game_sync_links || []).map(link => {
+    const card = data.cards.find(c => c.id === link.portable_card_id);
+    const group = data.sync_groups.find(g => g.id === link.group_id);
+    return `<article class="sync-group"><div class="save-heading"><h2>${h(link.label)} <small>PSP game sync</small></h2>${badge(link.enabled ? link.status : 'paused')}</div><p>${h(link.game_key)} · ${card ? h(cardLabel(card)) : 'Removed card'} ↔ ${h(group?.label || 'Removed group')}</p><p>${h(link.message)}</p><div class="table-actions"><button data-action="toggle-game-sync" data-id="${link.id}">${link.enabled ? 'Pause' : 'Resume'}</button><button data-action="retry-game-sync" data-id="${link.id}">Scan / retry</button>${link.status === 'conflict' ? `<button data-action="game-sync-source" data-id="${link.id}" data-source="shared">Use shared saves</button><button data-action="game-sync-source" data-id="${link.id}" data-source="portable">Use PSP saves</button>` : ''}<button data-action="remove-game-sync" data-id="${link.id}">Remove link</button></div></article>`;
+  }).join('') : '';
   $('#sync-groups').innerHTML = data.sync_groups.filter(g => g.backend === activeSystem).map(group => {
     const members = data.sync_members.filter(m => m.group_id === group.id);
     return `<article class="sync-group"><div class="save-heading"><h2>${h(group.label)}</h2>${badge(group.enabled?group.status:'paused')}</div><p>${h(group.message || 'Waiting for stable scans.')}</p><div class="table-actions"><button data-action="configure-card-sync" data-id="${group.id}">Choose cards…</button><button data-action="toggle-sync" data-id="${group.id}">${group.enabled?'Pause sync':'Resume sync'}</button><button data-action="retry-sync" data-id="${group.id}">Scan / retry now</button></div><div class="table-wrap"><table><thead><tr><th>Memory card</th><th>Status</th><th></th></tr></thead><tbody>${members.map(member => {
@@ -358,11 +364,8 @@ function updateLocationRoot() {
 }
 function updateLocationAccess() {
   const form = $('#location-form');
-  const device = data.devices.find(d => d.id === Number(form.dataset.deviceId || form.elements.device_id.value));
-  const readOnly = form.elements.suffix.value === '.vmp';
-  form.elements.writable.disabled = readOnly;
-  if (readOnly) form.elements.writable.checked = false;
-  $('#location-write-hint').hidden = !readOnly;
+  form.elements.writable.disabled = false;
+  $('#location-write-hint').hidden = form.elements.suffix.value !== '.vmp';
 }
 function openLocation(deviceId, id) {
   const form = $('#location-form'); form.reset(); form.dataset.deviceId = deviceId || ''; form.dataset.id = id || ''; form.querySelector('.form-error').textContent = '';
@@ -552,6 +555,21 @@ $('#delete-location-form').addEventListener('submit', event => {
   });
 });
 $('#new-card-sync').addEventListener('click', () => openCardSync());
+$('#new-game-sync').addEventListener('click', () => {
+  const form = $('#game-sync-form'); form.reset();
+  form.querySelector('.form-error').textContent = '';
+  form.elements.game_key.innerHTML = data.library.games.filter(g => g.backend === 'ps1' && g.serial).map(g => `<option value="${h(g.serial)}">${h(g.title)} · ${h(g.serial)}</option>`).join('');
+  form.elements.group_id.innerHTML = data.sync_groups.filter(g => g.backend === 'ps1' && g.enabled).map(g => `<option value="${g.id}">${h(g.label)}</option>`).join('');
+  form.elements.portable_card_id.innerHTML = data.cards.filter(c => c.present && backendOf(c) === 'ps1' && c.filename.toLowerCase().endsWith('.vmp') && canWriteCard(c) && !(data.game_sync_links || []).some(link => link.portable_card_id === c.id)).map(c => `<option value="${c.id}">${h(cardLabel(c))}</option>`).join('');
+  $('#game-sync-dialog').showModal();
+});
+$('#game-sync-form').addEventListener('submit', event => {
+  event.preventDefault(); const form = event.currentTarget;
+  formSubmit(form, async () => {
+    await api('sync/games', {game_key:form.elements.game_key.value, group_id:Number(form.elements.group_id.value), portable_card_id:Number(form.elements.portable_card_id.value), initial_source:form.elements.initial_source.value});
+    $('#game-sync-dialog').close(); await refresh(); notice('PSP per-game sync enabled.');
+  });
+});
 $('#sync-form').addEventListener('submit', event => {
   event.preventDefault(); const form = event.currentTarget;
   formSubmit(form, async () => {
@@ -630,6 +648,10 @@ document.addEventListener('click', async event => {
       case 'cards': selectedDevice = id; renderCards(); $('#cards-dialog').showModal(); break;
       case 'transfer': openTransfer(id); break;
       case 'delete-save': openTransfer(id, null, true); break;
+      case 'toggle-game-sync': { const link = data.game_sync_links.find(x => x.id === id); await api(`sync/games/${id}`, {enabled:!link.enabled}, 'PUT'); await refresh(); break; }
+      case 'retry-game-sync': await api(`sync/games/${id}`, {}, 'PUT'); await refresh(); break;
+      case 'game-sync-source': await api(`sync/games/${id}`, {source:button.dataset.source}, 'PUT'); await refresh(); break;
+      case 'remove-game-sync': await api(`sync/games/${id}`, {}, 'DELETE'); await refresh(); break;
       case 'configure-card-sync': openCardSync(id); break;
       case 'retry-sync': await api(`sync/groups/${id}/retry`,{}); await refresh(); break;
       case 'sync-source': openSyncSource(id, Number(button.dataset.card)); break;

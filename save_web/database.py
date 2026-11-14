@@ -97,7 +97,7 @@ class Database:
         self.path.chmod(0o600)
         with self.connect() as db:
             version = db.execute('PRAGMA user_version').fetchone()[0]
-            if version > 17:
+            if version > 18:
                 raise ValueError('This database requires a newer Save Manager.')
             db.execute('PRAGMA journal_mode=WAL')
             db.executescript(SCHEMA + LIBRARY_SCHEMA)
@@ -209,7 +209,19 @@ class Database:
                 db.execute("UPDATE sync_members SET pending_scan=1 WHERE status='pending' AND message='Written; awaiting scan.'")
             if version < 17:
                 db.execute("UPDATE sync_groups SET enabled=0,status='paused',message='Per-game sync replaced by whole-card sync.',updated=datetime('now') WHERE scope='save'")
-            db.execute('PRAGMA user_version=17')
+            db.execute("""CREATE TABLE IF NOT EXISTS game_sync_links (
+                id INTEGER PRIMARY KEY, game_key TEXT NOT NULL, label TEXT NOT NULL,
+                group_id INTEGER NOT NULL REFERENCES sync_groups(id),
+                portable_card_id INTEGER NOT NULL UNIQUE REFERENCES cards(id),
+                enabled INTEGER NOT NULL DEFAULT 1,
+                shared_baseline TEXT, portable_baseline TEXT,
+                preferred TEXT, initialize_portable INTEGER NOT NULL DEFAULT 1,
+                pending_card_id INTEGER, pending_hash TEXT, pending_since TEXT,
+                status TEXT NOT NULL DEFAULT 'settling', message TEXT NOT NULL DEFAULT '',
+                next_scan REAL NOT NULL DEFAULT 0, retry_after REAL NOT NULL DEFAULT 0,
+                updated TEXT NOT NULL
+            )""")
+            db.execute('PRAGMA user_version=18')
 
     @contextmanager
     def connect(self):

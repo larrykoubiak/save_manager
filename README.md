@@ -59,8 +59,8 @@ and tunnel configuration.
 - Opt-in automatic sync of shared memory cards, with stable scans,
   offline queues, conflict selection, raw/ECC conversion, and backups before writes.
 
-PSP `.VMP` containers can be read as sources; writing/signing them and native
-PSP/Vita/PS3 save formats remain future work.
+PSP `.VMP` cards support signed writes and per-game sync with shared cards through FTP.
+Native PSP/Vita/PS3 save formats remain future work.
 Game plugins focus on save slots and safe copying; optional
 inspection/merge helpers remain in the shared backend.
 

@@ -23,7 +23,8 @@ from test_ps1 import fixture, payload
 def vmp(data):
     header=bytearray(128);header[:4]=b'\0PMV';struct.pack_into('<I',header,4,128)
     header[12:32]=bytes(range(20))
-    return bytes(header)+data
+    from save_core.backends.ps1.vmp import wrap
+    return wrap(data, bytes(header)+data)
 
 
 class ReadOnlyFTP:
@@ -147,8 +148,8 @@ class FTPTest(unittest.TestCase):
         for body in (dict(ftp_port=True),dict(ftp_port=0),dict(ftp_host='ftp://psp.local'),dict(root_path='/../etc'),dict(ftp_username='bad\r\nSTOR')):
             with self.subTest(body=body),self.assertRaises(ValueError):
                 self.service.update_device(self.device['id'],body)
-        with self.assertRaisesRegex(ValueError,'read-only'):
-            self.service.save_location(self.device['id'],dict(name='Unsafe',path='other',backend='ps1',suffix='.vmp',writable=True))
+        writable = self.service.save_location(self.device['id'],dict(name='Signed cards',path='other',backend='ps1',suffix='.vmp',writable=True))
+        self.assertTrue(writable['writable'])
         with self.assertRaises(ValueError):
             self.service.save_location(self.device['id'],dict(name='Escape',path='../outside',backend='ps1',suffix='.vmp'))
 
@@ -156,7 +157,7 @@ class FTPTest(unittest.TestCase):
         before=dict(self.state['files'])
         self.assertEqual(self.scan()['status'],'done')
         inventory=self.service.inventory();remote=[c for c in inventory['cards'] if c['location_id']==self.location['id']]
-        self.assertEqual(len(remote),2);self.assertTrue(all(c['read_only'] for c in remote))
+        self.assertEqual(len(remote),2);self.assertFalse(any(c['read_only'] for c in remote))
         save=next(s for s in inventory['saves'] if s['directory']=='GAME')
         target=next(c for c in inventory['cards'] if c['filename']=='card.mcr')
         self.assertEqual(next(c for c in remote if c['filename'].endswith('SCEVMC0.VMP'))['sha256'],hashlib.sha256(before[self.source]).hexdigest())
@@ -208,12 +209,14 @@ class FTPTest(unittest.TestCase):
         self.assertIn('login rejected',job['error'])
         self.assertNotIn('private-password',json.dumps(self.service.inventory()))
 
-    def test_local_vmp_writes_are_refused_and_source_payload_works(self):
+    def test_local_vmp_writes_are_signed_and_source_payload_works(self):
+        from save_core.backends.ps1.vmp import verify
         backend=get_backend('ps1');source=self.root/'card.vmp';source.write_bytes(self.state['files'][self.source])
         bundle=backend.read_save(source,'GAME');self.assertEqual(bundle.file_data()['data'],payload())
         before=source.read_bytes()
-        with self.assertRaisesRegex(ValueError,'read-only'):backend.plan_delete(source,{'save':'GAME'})
-        with self.assertRaisesRegex(ValueError,'read-only'):backend.plan_copy(self.target,{'save':'GAME'},source)
+        plan=backend.plan_delete(source,{'save':'GAME'})
+        self.assertTrue(verify(plan.candidate))
+        self.assertEqual(len(plan.candidate),len(before))
         self.assertEqual(source.read_bytes(),before)
         bad=bytearray(before);struct.pack_into('<I',bad,4,64)
         with self.assertRaisesRegex(ValueError,'header'):backend.validate(bytes(bad),'card.vmp')

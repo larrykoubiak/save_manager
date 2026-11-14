@@ -53,8 +53,6 @@ class Sync:
                 location = self.db.one('SELECT * FROM locations WHERE id=? AND deleted=0', (card['location_id'],))
                 if not location['writable']:
                     raise ValueError('Destination location is read-only. Enable writes first.')
-                if location['backend']=='ps1' and card['filename'].lower().endswith('.vmp'):
-                    raise ValueError('PSP VMP cards are read-only until signing support is added.')
                 if location['status']=='online':
                     card, location, _ = self.service._card(card_id, writable=True)
                 if backend_id is not None and backend_id != location['backend']:
@@ -94,6 +92,8 @@ class Sync:
 
     def check_overlap(self, ids, key=None):
         placeholders = ','.join('?' for _ in ids)
+        if self.db.rows(f'SELECT id FROM game_sync_links WHERE enabled=1 AND portable_card_id IN ({placeholders})',ids):
+            raise ValueError('A PSP card already has per-game sync. Pause that link before using whole-card sync.')
         if self.db.rows(f"SELECT g.id FROM sync_groups g JOIN sync_members m ON m.group_id=g.id WHERE g.enabled=1 AND g.scope='card' AND m.card_id IN ({placeholders}) AND g.id!=?",
                         (*ids, key or -1)):
             raise ValueError('A selected card already belongs to another enabled sync group. Pause that group first.')
@@ -221,6 +221,7 @@ class Sync:
                     self.process(group)
                 except Exception as error:
                     self.state(group,'blocked',str(error))
+            self.service.game_sync.tick()
 
     def process(self, group):
         members = self.members(group)

@@ -67,12 +67,19 @@ class CardSyncTest(unittest.TestCase):
         self.assertEqual(backup.read_bytes(),original)
         self.assertEqual(json.loads(manifest.read_text())[0]['hash'],hashlib.md5(source.read_bytes()).hexdigest())
 
-    def test_psp_can_be_read_but_signed_destinations_remain_protected(self):
+    def test_psp_card_conversion_preserves_header_and_signs_changes(self):
         backend = get_backend('ps1')
         raw = fixture([('SAVE',(1,),payload())])
         self.assertEqual(backend.card_data(vmp(raw)),raw)
-        with self.assertRaisesRegex(ValueError,'read-only'):
-            backend.card_image(raw,vmp(raw))
+        from save_core.backends.ps1.vmp import verify
+        original = vmp(raw)
+        changed = fixture([('NEW',(1,),payload('New progress'))])
+        result = backend.card_image(changed,original)
+        self.assertEqual(backend.card_data(result),changed)
+        self.assertEqual(result[:32],original[:32])
+        self.assertEqual(result[52:128],original[52:128])
+        self.assertTrue(verify(result))
+        backend.validate(result,'card.vmp')
 
     def test_changed_destination_blocks_apply_before_backup_or_write(self):
         source, target = self.root/'source.mcr', self.root/'target.mcr'

@@ -44,6 +44,8 @@ class Service:
         self.previews = {}
         from .sync import Sync
         self.sync = Sync(self)
+        from .game_sync import GameSync
+        self.game_sync = GameSync(self)
         with self.db.connect() as db:
             db.execute("UPDATE jobs SET status='interrupted', finished=?, error='Server restarted; scan again.' WHERE status IN ('queued','running')", (now(),))
             db.execute("UPDATE transfers SET status='expired', finished=?, error='Server restarted; preview again.' WHERE status='preview'", (now(),))
@@ -126,8 +128,6 @@ class Service:
             writable = values.get('writable', False)
             if not isinstance(writable, (bool, int)) or writable not in (0, 1):
                 raise ValueError('Writable must be true or false.')
-            if writable and suffix=='.vmp':
-                raise ValueError('PSP VMP cards are read-only until signing support is added.')
             self._check_location_path(path,key,device,backend_id,suffix)
             if key and (str(relative) != old['path'] or backend_id != old['backend']):
                 raise ValueError('Add a new location to change path or system; existing history belongs to this location.')
@@ -166,6 +166,7 @@ class Service:
             (SELECT group_id FROM sync_members WHERE card_id IN (SELECT id FROM cards WHERE location_id=?))''',
             (now(), key, key))
         db.execute('DELETE FROM sync_members WHERE card_id IN (SELECT id FROM cards WHERE location_id=?)', (key,))
+        db.execute("UPDATE game_sync_links SET enabled=0,status='paused',message='PSP location removed.' WHERE portable_card_id IN (SELECT id FROM cards WHERE location_id=?)",(key,))
         db.execute('DELETE FROM sync_observations WHERE card_id IN (SELECT id FROM cards WHERE location_id=?)', (key,))
         db.execute('UPDATE saves SET present=0 WHERE card_id IN (SELECT id FROM cards WHERE location_id=?)', (key,))
         db.execute('UPDATE cards SET present=0 WHERE location_id=?', (key,))
@@ -209,14 +210,14 @@ class Service:
                 'transfers': '''SELECT t.*,c.filename destination_filename FROM transfers t JOIN cards c ON c.id=t.destination_card_id ORDER BY t.created DESC LIMIT 50''' ,
                 'sync_groups': "SELECT * FROM sync_groups WHERE scope='card' AND EXISTS(SELECT 1 FROM sync_members m WHERE m.group_id=sync_groups.id) ORDER BY label",
                 'sync_members': 'SELECT * FROM sync_members ORDER BY group_id,card_id',
+                'game_sync_links': 'SELECT * FROM game_sync_links ORDER BY label,id',
             }.items()}
             result['library'] = self.library.inventory(db)
         result['backends'] = backend_info()
         from game_plugins import plugin_for
         locations = {location['id']: location for location in result['locations']}
         for card in result['cards']:
-            location = locations[card['location_id']]
-            card['read_only'] = location['backend']=='ps1' and card['filename'].lower().endswith('.vmp')
+            card['read_only'] = False
         cards = {card['id']: card for card in result['cards']}
         for save in result['saves']:
             backend = locations[cards[save['card_id']]['location_id']]['backend']
@@ -338,6 +339,8 @@ class Service:
                     self._expire_previews()
                 self.enqueue_due()
                 self.sync.enqueue_due()
+                with self.lock:
+                    self.game_sync.enqueue_due()
                 jobs = self.db.rows("SELECT id FROM jobs WHERE status='queued' ORDER BY id LIMIT 1")
                 if jobs:
                     self.run_scan(jobs[0]['id'])
@@ -369,8 +372,6 @@ class Service:
             raise ValueError('Scan this location successfully before transferring saves.')
         if writable and not location['writable']:
             raise ValueError('Destination location is read-only. Enable writes in its settings first.')
-        if writable and location['backend']=='ps1' and card['filename'].lower().endswith('.vmp'):
-            raise ValueError('PSP VMP cards are read-only until signing support is added.')
         device = self.db.one('SELECT * FROM devices WHERE id=?', (location['device_id'],))
         location = {**location,'transport':device['transport'],'ftp_host':device['ftp_host'],
                     'ftp_port':device['ftp_port'],'device_name':device['name']}

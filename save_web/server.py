@@ -127,6 +127,16 @@ class Application:
                 return response(202, self.service.queue_scan(device_id))
         if path == '/api/transfers/preview' and method == 'POST':
             return response(201, self.service.preview(body))
+        if path == '/api/sync/games' and method == 'POST':
+            return response(201,self.service.game_sync.configure(body))
+        if len(parts)==4 and parts[:3]==['api','sync','games']:
+            if method=='PUT':
+                return response(200,self.service.game_sync.update(int(parts[3]),body))
+            if method=='DELETE':
+                with self.service.lock, self.service.db.connect() as db:
+                    self.service.game_sync.link(int(parts[3]))
+                    db.execute('DELETE FROM game_sync_links WHERE id=?',(int(parts[3]),))
+                return response(200,{'status':'removed'})
         if path == '/api/sync/groups' and method == 'POST':
             return response(201, self.service.sync.configure(body))
         if len(parts) >= 4 and parts[:3] == ['api', 'sync', 'groups']:

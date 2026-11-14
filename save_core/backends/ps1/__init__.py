@@ -2,11 +2,11 @@
 
 from dataclasses import replace
 from pathlib import Path
-import struct
 import unicodedata
 
 from ..base import BackendCapabilities, SaveBundle, SaveFile
 from .card import SIZE, Card, blank_card
+from . import vmp
 
 
 def is_erased(data):
@@ -14,10 +14,9 @@ def is_erased(data):
 
 
 def raw_image(data):
-    """Read PSP VMP containers without editing their signed header."""
+    """Unwrap raw PS1 memory-card data from a supported container."""
     if data[:4]==b'\0PMV':
-        if len(data)!=SIZE+128 or struct.unpack_from('<I',data,4)[0]!=128:
-            raise ValueError('Invalid PSP VMP container size or header.')
+        vmp.header(data)
         return data[128:]
     return data
 
@@ -36,8 +35,10 @@ class PS1Backend:
 
     @staticmethod
     def card_image(content, original):
+        if original[:4] == b'\0PMV':
+            return vmp.wrap(content, original)
         if len(original) != SIZE or len(content) != SIZE:
-            raise ValueError('Signed and headered PS1 destinations are read-only.')
+            raise ValueError('Unsupported PS1 destination container.')
         return content
 
     @staticmethod
@@ -47,8 +48,10 @@ class PS1Backend:
 
     def validate(self, data, name):
         Card(raw_image(data))
+        if data[:4] == b'\0PMV' and not vmp.verify(data):
+            raise ValueError('PSP VMP signature mismatch.')
 
-    def _read(self, path, record=None, *, writable=False):
+    def _read(self, path, record=None):
         from save_core.save_merge import stable_read
         path = Path(path).resolve()
         data = stable_read(path)
@@ -56,8 +59,8 @@ class PS1Backend:
         if record and record.get('card_version') and record['card_version']!=(stat.st_size,stat.st_mtime_ns):
             raise ValueError('Card changed since its scan. Scan and preview again.')
         raw = raw_image(data)
-        if writable and (raw is not data or path.suffix.lower()=='.vmp'):
-            raise ValueError('PSP VMP cards are read-only until signing support is added.')
+        if path.suffix.lower()=='.vmp' and raw is data:
+            raise ValueError('Expected a PSP VMP header.')
         if is_erased(raw):
             raise ValueError('PS1 card is unformatted. Format it in the emulator first.')
         return path,data,Card(raw)
@@ -127,7 +130,8 @@ class PS1Backend:
     def _plan(self, source, source_data, destination, original, card, save_id, bundle, action):
         from save_core.save_copy import CopyPlan
         from save_core.save_merge import digest
-        before = Card(original)
+        original_raw = raw_image(original)
+        before = Card(original_raw)
         if save_id in card.entries:
             card.delete(save_id)
         if bundle is not None:
@@ -155,8 +159,9 @@ class PS1Backend:
         for block in written_blocks:
             allowed.update(before.remapped.get(block*64+sector,block*64+sector) for sector in range(64))
         for sector in range(SIZE//128):
-            if sector not in allowed and original[sector*128:(sector+1)*128]!=candidate[sector*128:(sector+1)*128]:
+            if sector not in allowed and original_raw[sector*128:(sector+1)*128]!=candidate[sector*128:(sector+1)*128]:
                 raise ValueError('PS1 candidate changed data outside the selected save.')
+        candidate = self.card_image(candidate, original)
         return CopyPlan(source,destination,digest(source_data),digest(original),save_id,save_id,action,candidate,original)
 
     def plan_copy(self, source, record, destination, conflict='stop'):
@@ -166,7 +171,7 @@ class PS1Backend:
         if conflict not in ('stop','replace','keep_both'):
             raise ValueError('Unknown PS1 copy conflict policy.')
         source,source_data,source_card = self._read(source,record)
-        destination,original,card = self._read(destination,writable=True)
+        destination,original,card = self._read(destination)
         if source.samefile(destination):
             raise ValueError('Choose a different destination card.')
         save_id = record['save']
@@ -199,7 +204,7 @@ class PS1Backend:
         return self._plan(source,source_data,destination,original,card,save_id,bundle,action)
 
     def plan_delete(self, path, record):
-        path,data,card = self._read(path,record,writable=True)
+        path,data,card = self._read(path,record)
         self._bundle(card,record['save'])
         return self._plan(path,data,path,data,card,record['save'],None,'Delete save')
 
@@ -214,7 +219,7 @@ class PS1Backend:
         if not card_slots and not callable(getattr(plugin,'copy_slot',None)):
             raise ValueError('No PS1 game plugin supports individual slots for this save yet.')
         source,source_data,source_card = self._read(source,record)
-        destination,original,card = self._read(destination,writable=True)
+        destination,original,card = self._read(destination)
         source_bundle = self._bundle(source_card,record['save'])
         if card_slots:
             if type(source_slot) is not int or source_slot!=plugin.slot_number(record['save']):

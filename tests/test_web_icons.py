@@ -137,7 +137,7 @@ class IconMigrationTest(unittest.TestCase):
             self.assertEqual(service.inventory()['devices'][0]['name'], 'Existing library')
             self.assertEqual(service.inventory()['slots'], [])
             with service.db.connect() as db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 17)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 18)
                 columns = {row[1] for row in db.execute('PRAGMA table_info(transfers)')}
                 self.assertTrue({'source_slot','destination_slot'} <= columns)
 
@@ -151,5 +151,5 @@ class IconMigrationTest(unittest.TestCase):
             self.addCleanup(service.close)
             self.assertEqual(service.inventory()['devices'][0]['name'], 'Original PS2')
             with service.db.connect() as db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 17)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 18)
                 self.assertIn('icon_hash', [row[1] for row in db.execute('PRAGMA table_info(saves)')])
